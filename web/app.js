@@ -289,11 +289,10 @@ $("#generateShipment").addEventListener("click", async () => {
 });
 
 $("#generateMaterial").addEventListener("click", async () => {
-  const stockField = $('input[name="stockField"]:checked').value;
   const workshopStockText = $('[data-text-slot="module2_stock_text"]').value;
   const data = await request("/api/generate/material-issue", {
     method: "POST",
-    body: JSON.stringify({ stock_field: stockField, workshop_stock_text: workshopStockText }),
+    body: JSON.stringify({ workshop_stock_text: workshopStockText }),
   });
   renderDownload($("#materialResult"), data);
 });

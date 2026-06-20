@@ -50,7 +50,6 @@ class GeneratePayload(BaseModel):
 
 
 class MaterialPayload(BaseModel):
-    stock_field: str = "inventory"
     workshop_stock_text: str = ""
 
 
@@ -182,7 +181,6 @@ async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
 
 @app.post("/api/generate/material-issue")
 async def generate_material(payload: MaterialPayload) -> dict[str, Any]:
-    stock_field = "theory_stock" if payload.stock_field == "theory_stock" else "inventory"
     workshop_text = payload.workshop_stock_text or text_value("module2_stock_text")
     with TemporaryDirectory() as tmp:
         output, missing, warnings = generate_material_issue_workbook(
@@ -191,7 +189,6 @@ async def generate_material(payload: MaterialPayload) -> dict[str, Any]:
             conversion_path=slot_path("conversion_table"),
             material_template_path=slot_path("material_template"),
             workshop_stock_text=workshop_text,
-            stock_field=stock_field,
             output_dir=Path(tmp),
         )
         if missing:
@@ -227,4 +224,3 @@ app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
-

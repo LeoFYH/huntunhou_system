@@ -560,7 +560,6 @@ def generate_material_issue_workbook(
     conversion_path: Path | None,
     material_template_path: Path | None,
     workshop_stock_text: str,
-    stock_field: str,
     output_dir: Path,
 ) -> tuple[Path | None, list[str], list[str]]:
     missing = []
@@ -588,8 +587,13 @@ def generate_material_issue_workbook(
         safety = row.get("safety")
         if safety is None:
             continue
-        current = row.get("inventory") if stock_field == "inventory" else row.get("theory_stock")
-        current = 0.0 if current is None else float(current)
+        inventory = row.get("inventory") or 0.0
+        inbound = row.get("inbound") or 0.0
+        outbound = row.get("outbound") or 0.0
+        current = row.get("theory_stock")
+        if current is None:
+            current = float(inventory) + float(inbound) - float(outbound)
+        current = float(current)
         if current > float(safety) * 0.5:
             continue
         production_qty = row.get("production") or safety

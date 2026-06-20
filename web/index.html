@@ -97,7 +97,7 @@
           <div class="num">2</div>
           <div>
             <h2>排产表 → 材料出库单</h2>
-            <p>50% 筛选、配方、换算、向上取整</p>
+            <p>理论库存低于安全库存 50% 才触发领料</p>
           </div>
           <button class="ghost" data-reset-module="2">清空本模块</button>
         </div>
@@ -110,12 +110,8 @@
             <label class="drop"><input type="file" data-slot="module2_production" accept=".xlsx,.xls" />选择排产表</label>
             <div class="files" data-files="module2_production"></div>
           </div>
-          <div class="field">
-            <div class="field-title">50% 使用字段</div>
-            <div class="segmented">
-              <label><input type="radio" name="stockField" value="inventory" checked />盘点库存</label>
-              <label><input type="radio" name="stockField" value="theory_stock" />理论库存</label>
-            </div>
+          <div class="notice">
+            触发规则：理论库存数 = 盘点库存数 + 入库数 - 出库数；理论库存数低于安全库存数的 50% 时，才进入材料出库单。
           </div>
           <div class="field">
             <div class="field-row">
