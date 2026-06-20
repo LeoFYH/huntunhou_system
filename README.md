@@ -32,9 +32,19 @@ uvicorn backend.main:app --reload
 DEEPSEEK_API_KEY=你的 key
 DEEPSEEK_API_BASE=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
+ROBOT_API_BASE=http://127.0.0.1:9000
 ```
 
 未配置 key 时，页面会使用本地弱解析并提示人工核对。
+
+## 订单库同步
+
+机器人侧暴露：
+
+- `GET {ROBOT_API_BASE}/api/orders?status=new`
+- `POST {ROBOT_API_BASE}/api/orders/mark_fetched`，body 为 `{"ids":[...]}`
+
+页面模块 1 的“从订单库同步”只拉取已识别、已核验订单，展示本批全貌；用户确认并生成排产表成功后，后端再调用 `mark_fetched`，避免生成失败时误标记。
 
 ## 数据保存
 

@@ -380,6 +380,54 @@ button {
   color: var(--green);
 }
 
+.inline-actions {
+  justify-content: flex-start;
+  margin-top: 0;
+}
+
+.robot-preview {
+  margin-top: 10px;
+}
+
+.robot-panel {
+  border: 1px solid var(--ai);
+  background: var(--ai-soft);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 13px;
+}
+
+.robot-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ai);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.robot-store {
+  background: #fff;
+  border: 1px solid #cfdae7;
+  border-radius: 8px;
+  padding: 9px;
+  margin-top: 8px;
+}
+
+.robot-store-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.robot-store ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
 .notice,
 .download {
   border-radius: 8px;

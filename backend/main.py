@@ -19,6 +19,7 @@ from .services.excel_service import (
     parse_rows,
     summarize_recipe_tables,
 )
+from .services.robot_service import fetch_robot_orders, mark_robot_orders_fetched
 from .storage import (
     ensure_storage,
     output_path,
@@ -48,6 +49,7 @@ class AiTextPayload(BaseModel):
 
 class GeneratePayload(BaseModel):
     confirmed_items: list[dict[str, Any]] = []
+    robot_order_ids: list[Any] = []
 
 
 class MaterialPayload(BaseModel):
@@ -77,6 +79,14 @@ async def state() -> dict[str, Any]:
 @app.get("/api/recipe-preview")
 async def recipe_preview() -> dict[str, Any]:
     return summarize_recipe_tables(slot_paths("recipe_table"))
+
+
+@app.get("/api/robot/orders/fetch")
+async def robot_fetch_orders(status: str = "new") -> dict[str, Any]:
+    try:
+        return await fetch_robot_orders(status=status)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/upload/{slot}")
@@ -167,7 +177,14 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)
-    return {"output": registered, "warnings": warnings}
+    robot_mark = None
+    if payload.robot_order_ids:
+        try:
+            robot_mark = await mark_robot_orders_fetched(payload.robot_order_ids)
+        except Exception as exc:
+            warnings.append(f"排产表已生成，但订单库 mark_fetched 失败：{exc}")
+            robot_mark = {"ok": False, "error": str(exc), "ids": payload.robot_order_ids}
+    return {"output": registered, "warnings": warnings, "robot_mark": robot_mark}
 
 
 @app.post("/api/generate/shipment")

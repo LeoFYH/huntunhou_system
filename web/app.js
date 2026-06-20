@@ -4,6 +4,9 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let appState = {};
 let confirmedOrderItems = [];
 let confirmedShipmentItems = [];
+let robotFetchedItems = [];
+let robotFetchedIds = [];
+let acceptedRobotOrderIds = [];
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -172,7 +175,58 @@ function renderDownload(target, data) {
   if (data.output) {
     html += `<div class="download"><span>${data.output.name}</span><a href="${data.output.url}">下载</a></div>`;
   }
+  if (data.robot_mark && data.robot_mark.ok !== false && !data.robot_mark.skipped) {
+    html += `<div class="download"><span>订单库已标记为已拉取</span></div>`;
+  }
   target.innerHTML = html;
+}
+
+function renderRobotFetch(data) {
+  const target = $("#robotFetchResult");
+  robotFetchedItems = data.items || [];
+  robotFetchedIds = data.ids || [];
+  acceptedRobotOrderIds = [];
+  const warnings = data.warnings || [];
+  const counts = data.counts || {};
+  let html = "";
+  warnings.forEach((warning) => {
+    html += `<div class="notice">${warning}</div>`;
+  });
+  if (!robotFetchedItems.length) {
+    target.innerHTML = `${html}<div class="notice">订单库没有待处理订单。</div>`;
+    return;
+  }
+  const groups = (data.grouped || [])
+    .map((group) => {
+      const items = (group.items || [])
+        .slice(0, 18)
+        .map((item) => `<li>${item.name} × ${item.quantity}${item.unit || ""}</li>`)
+        .join("");
+      const more = (group.items || []).length > 18 ? `<li>还有 ${(group.items || []).length - 18} 条...</li>` : "";
+      return `
+        <div class="robot-store">
+          <div class="robot-store-title">
+            <span>${group.store}</span>
+            <span>${(group.orders || []).length} 单 · ${(group.items || []).length} 个品</span>
+          </div>
+          <ul>${items}${more}</ul>
+        </div>
+      `;
+    })
+    .join("");
+  target.innerHTML = `
+    ${html}
+    <div class="robot-panel">
+      <div class="robot-panel-head">
+        <span>订单库本批全貌</span>
+        <span>${counts.orders || 0} 单 · ${counts.stores || 0} 门店 · ${counts.items || 0} 行</span>
+      </div>
+      ${groups}
+      <div class="actions">
+        <button class="primary" id="acceptRobotFetch">确认并入本批</button>
+      </div>
+    </div>
+  `;
 }
 
 function receiptRow(item = {}) {
@@ -228,6 +282,7 @@ document.addEventListener("click", async (event) => {
   const removeRow = event.target.closest("[data-remove-row]");
   const addConfirm = event.target.closest("[data-add-confirm-row]");
   const acceptConfirm = event.target.closest("[data-accept-confirm]");
+  const acceptRobotFetch = event.target.closest("#acceptRobotFetch");
   if (resetSlot) {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
     appState = data.state;
@@ -259,6 +314,11 @@ document.addEventListener("click", async (event) => {
     if (includeStore) confirmedShipmentItems = items;
     else confirmedOrderItems = items;
     container.classList.add("hidden");
+  } else if (acceptRobotFetch) {
+    confirmedOrderItems = [...confirmedOrderItems, ...robotFetchedItems];
+    acceptedRobotOrderIds = [...robotFetchedIds];
+    acceptRobotFetch.disabled = true;
+    acceptRobotFetch.textContent = "已并入，生成排产表后标记已拉取";
   }
 });
 
@@ -272,6 +332,17 @@ $("#parseOrder").addEventListener("click", async () => {
   });
   renderConfirm($("#orderConfirm"), data.items || [], false);
   if (data.message) $("#orderConfirm").insertAdjacentHTML("afterbegin", `<div class="notice">${data.message}</div>`);
+});
+
+$("#fetchRobotOrders").addEventListener("click", async () => {
+  const target = $("#robotFetchResult");
+  target.innerHTML = `<div class="notice">正在从订单库拉取...</div>`;
+  try {
+    const data = await request("/api/robot/orders/fetch");
+    renderRobotFetch(data);
+  } catch (error) {
+    target.innerHTML = `<div class="notice">${error.message}</div>`;
+  }
 });
 
 $("#parseShipment").addEventListener("click", async () => {
@@ -288,9 +359,12 @@ $("#generateProduction").addEventListener("click", async () => {
   try {
     const data = await request("/api/generate/production", {
       method: "POST",
-      body: JSON.stringify({ confirmed_items: confirmedOrderItems }),
+      body: JSON.stringify({ confirmed_items: confirmedOrderItems, robot_order_ids: acceptedRobotOrderIds }),
     });
     renderDownload($("#productionResult"), data);
+    if (data.robot_mark && data.robot_mark.ok !== false) {
+      acceptedRobotOrderIds = [];
+    }
   } catch (error) {
     $("#productionResult").innerHTML = `<div class="notice">${error.message}</div>`;
   }
