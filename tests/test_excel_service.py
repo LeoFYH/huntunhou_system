@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
+
 from openpyxl import Workbook
 
-from backend.services.excel_service import aggregate_orders, parse_rows, safety_stock_map
+from backend.services.excel_service import aggregate_orders, parse_recipe_table, parse_rows, recipe_required_qty, safety_stock_map
 
 
 def save_order(path: Path) -> None:
@@ -41,3 +43,25 @@ def test_safety_stock_map(tmp_path: Path) -> None:
     save_safety(safety)
     values = safety_stock_map(safety)
     assert next(iter(values.values())) == 60
+
+
+def test_parse_feed_sheet_recipe(tmp_path: Path) -> None:
+    path = tmp_path / "feed.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "鸡蛋面"
+    ws["A1"] = "鸡蛋面投料单"
+    ws["J3"] = "订单量"
+    ws["L3"] = 10
+    ws.append([])
+    ws.append([])
+    ws.append(["NO.", "原料名称", "单品净重  g", "得率", "原料使用量 g", "", "生产个数\n（订单量+保存样）"])
+    ws.append([1, "面粉", 100, 0.5, "=C5/D5", "g", "=$L$3+2"])
+    ws.append(["TTL", "", "=SUM(C5:C5)"])
+    wb.save(path)
+
+    recipes = parse_recipe_table(path)
+    assert recipes[0]["finished"] == "鸡蛋面"
+    assert recipes[0]["raw"] == "面粉"
+    assert recipes[0]["qty"] == 0.2
+    assert recipe_required_qty(recipes[0], 10) == pytest.approx(2.4)

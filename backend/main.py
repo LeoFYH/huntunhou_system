@@ -185,7 +185,7 @@ async def generate_material(payload: MaterialPayload) -> dict[str, Any]:
     with TemporaryDirectory() as tmp:
         output, missing, warnings = generate_material_issue_workbook(
             production_path=slot_path("module2_production"),
-            recipe_path=slot_path("recipe_table"),
+            recipe_paths=slot_paths("recipe_table"),
             conversion_path=slot_path("conversion_table"),
             material_template_path=slot_path("material_template"),
             workshop_stock_text=workshop_text,

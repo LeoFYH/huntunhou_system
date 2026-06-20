@@ -22,6 +22,7 @@ MULTI_FILE_SLOTS = {
     "module1_orders",
     "module3_photos",
     "module4_orders",
+    "recipe_table",
 }
 
 RESIDENT_SLOTS = {
@@ -142,6 +143,8 @@ async def save_upload(slot: str, upload: UploadFile) -> dict[str, Any]:
     }
     files = state.setdefault("files", {})
     if _slot_is_multi(slot):
+        if isinstance(files.get(slot), dict):
+            files[slot] = [files[slot]]
         files.setdefault(slot, [])
         files[slot].append(meta)
     else:

@@ -15,6 +15,7 @@ from openpyxl.utils import get_column_letter
 
 
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+CELL_REF_RE = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
 
 
 @dataclass
@@ -33,6 +34,13 @@ def normalize_text(value: Any) -> str:
 def normalize_key(value: Any) -> str:
     text = normalize_text(value).lower()
     return re.sub(r"[^\w\u4e00-\u9fff]+", "", text)
+
+
+def clean_finished_name(value: Any) -> str:
+    text = normalize_text(value)
+    text = re.sub(r"投料单$", "", text)
+    text = re.sub(r"（停用）|\(停用\)", "", text)
+    return text.strip()
 
 
 def to_number(value: Any) -> float | None:
@@ -505,7 +513,110 @@ def generate_shipment_outputs(
     return zip_path, warnings
 
 
+def _eval_linear_formula(ws, cell_ref: str, cache: dict[str, tuple[float, float]], stack: set[str] | None = None) -> tuple[float, float]:
+    stack = stack or set()
+    cell_ref = cell_ref.replace("$", "").upper()
+    if cell_ref in cache:
+        return cache[cell_ref]
+    if cell_ref in stack:
+        return (1.0, 0.0)
+    stack.add(cell_ref)
+    value = ws[cell_ref].value
+    if value in (None, ""):
+        stack.remove(cell_ref)
+        return (1.0, 0.0)
+    if isinstance(value, (int, float)):
+        stack.remove(cell_ref)
+        return (0.0, float(value))
+    expr = str(value).strip()
+    if expr.startswith("="):
+        expr = expr[1:]
+    expr = expr.replace("$", "").upper()
+    expr = expr.replace("L3", "Q")
+
+    def repl(match: re.Match[str]) -> str:
+        ref = f"{match.group(1)}{match.group(2)}"
+        if ref == "L3":
+            return "Q"
+        a, b = _eval_linear_formula(ws, ref, cache, stack)
+        return f"(({a})*Q+({b}))"
+
+    expr = CELL_REF_RE.sub(repl, expr)
+    if not re.fullmatch(r"[0-9Qq+\-*/(). ]+", expr):
+        stack.remove(cell_ref)
+        return (1.0, 0.0)
+
+    def evaluate(qty: float) -> float:
+        return float(eval(expr.replace("Q", str(qty)), {"__builtins__": {}}, {}))
+
+    try:
+        b = evaluate(0)
+        a = evaluate(1) - b
+    except Exception:
+        a, b = 1.0, 0.0
+    cache[cell_ref] = (a, b)
+    stack.remove(cell_ref)
+    return a, b
+
+
+def _parse_feed_sheet(ws) -> list[dict[str, Any]]:
+    title_name = clean_finished_name(ws.title)
+    first_cell_name = clean_finished_name(ws["A1"].value)
+    finished = title_name or first_cell_name
+    if not finished:
+        return []
+    rows: list[dict[str, Any]] = []
+    formula_cache: dict[str, tuple[float, float]] = {}
+    last = last_nonempty_row(ws)
+    header_rows = []
+    for r in range(1, last + 1):
+        headers = [normalize_text(ws.cell(r, c).value) for c in range(1, ws.max_column + 1)]
+        if "原料名称" in headers and any("单品净重" in value for value in headers) and "得率" in headers:
+            header_rows.append(r)
+
+    for header_row in header_rows:
+        for r in range(header_row + 1, last + 1):
+            marker = normalize_text(ws.cell(r, 1).value)
+            raw_name = normalize_text(ws.cell(r, 2).value)
+            if not raw_name:
+                continue
+            if raw_name == "原料名称":
+                break
+            if marker.upper() == "TTL":
+                break
+            net_weight_g = to_number(ws.cell(r, 3).value)
+            yield_rate = to_number(ws.cell(r, 4).value) or 1.0
+            if net_weight_g is None or not yield_rate:
+                continue
+            qty_per_unit_kg = float(net_weight_g) / float(yield_rate) / 1000
+            units_multiplier, units_addend = _eval_linear_formula(ws, f"G{r}", formula_cache)
+            rows.append(
+                {
+                    "finished_key": normalize_key(finished),
+                    "finished": finished,
+                    "raw_key": normalize_key(raw_name),
+                    "raw": raw_name,
+                    "unit": "kg",
+                    "spec": "",
+                    "code": "",
+                    "qty": qty_per_unit_kg,
+                    "units_multiplier": units_multiplier,
+                    "units_addend": units_addend,
+                    "source_sheet": ws.title,
+                    "source_row": r,
+                }
+            )
+    return rows
+
+
 def parse_recipe_table(path: Path) -> list[dict[str, Any]]:
+    wb = load_workbook(path, data_only=False)
+    feed_rows: list[dict[str, Any]] = []
+    for ws in wb.worksheets:
+        feed_rows.extend(_parse_feed_sheet(ws))
+    if feed_rows:
+        return feed_rows
+
     rows = parse_rows(path, "generic")
     recipes = []
     for row in rows:
@@ -527,6 +638,20 @@ def parse_recipe_table(path: Path) -> list[dict[str, Any]]:
             }
         )
     return recipes
+
+
+def parse_recipe_tables(paths: list[Path]) -> list[dict[str, Any]]:
+    recipes: list[dict[str, Any]] = []
+    for path in paths:
+        recipes.extend(parse_recipe_table(path))
+    return recipes
+
+
+def recipe_required_qty(recipe: dict[str, Any], production_qty: float) -> float:
+    multiplier = float(recipe.get("units_multiplier", 1.0))
+    addend = float(recipe.get("units_addend", 0.0))
+    units = multiplier * float(production_qty) + addend
+    return float(recipe["qty"]) * max(units, 0.0)
 
 
 def parse_workshop_stock(text: str) -> dict[str, float]:
@@ -556,7 +681,7 @@ def parse_conversion_table(path: Path | None) -> dict[str, float]:
 
 def generate_material_issue_workbook(
     production_path: Path | None,
-    recipe_path: Path | None,
+    recipe_paths: list[Path],
     conversion_path: Path | None,
     material_template_path: Path | None,
     workshop_stock_text: str,
@@ -565,8 +690,8 @@ def generate_material_issue_workbook(
     missing = []
     if not production_path:
         missing.append("已填好的排产表")
-    if not recipe_path:
-        missing.append("原材料配方表")
+    if not recipe_paths:
+        missing.append("原材料配方表/投料单")
     if not conversion_path:
         missing.append("单位换算表")
     if missing:
@@ -574,7 +699,7 @@ def generate_material_issue_workbook(
 
     warnings: list[str] = []
     production_rows = parse_rows(production_path, "production")
-    recipes = parse_recipe_table(recipe_path)
+    recipes = parse_recipe_tables(recipe_paths)
     conversions = parse_conversion_table(conversion_path)
     workshop_stock = parse_workshop_stock(workshop_stock_text)
 
@@ -596,10 +721,14 @@ def generate_material_issue_workbook(
         current = float(current)
         if current >= float(safety) * 0.5:
             continue
-        production_qty = row.get("production") or safety
-        for recipe in recipe_by_product.get(row["product_key"], []):
+        production_qty = float(row.get("production") or safety)
+        product_recipes = recipe_by_product.get(row["product_key"], [])
+        if not product_recipes:
+            warnings.append(f"{row['product']} 触发领料，但没有找到对应投料单/配方。")
+            continue
+        for recipe in product_recipes:
             raw_key = recipe["raw_key"]
-            need = float(recipe["qty"]) * float(production_qty)
+            need = recipe_required_qty(recipe, production_qty)
             need -= workshop_stock.get(raw_key, 0.0)
             if need <= 0:
                 continue
