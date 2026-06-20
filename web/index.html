@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>馄饨侯订单工具</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark">馄</div>
+          <div>
+            <h1>馄饨侯订单工具</h1>
+            <p>订单、排产、领料、入库、发货</p>
+          </div>
+        </div>
+        <button class="ghost" id="refreshState">刷新状态</button>
+      </header>
+
+      <section class="resident">
+        <div class="resident-head">
+          <h2>常驻表</h2>
+          <span id="apiState">读取中</span>
+        </div>
+        <div class="resident-grid">
+          <div class="field">
+            <div class="field-title">安全库存表</div>
+            <label class="drop"><input type="file" data-slot="safety_stock" accept=".xlsx,.xls" />上传或替换</label>
+            <div class="files" data-files="safety_stock"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">排产单模板</div>
+            <label class="drop"><input type="file" data-slot="production_template" accept=".xlsx,.xls" />上传或替换</label>
+            <div class="files" data-files="production_template"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">材料出库单模板</div>
+            <label class="drop"><input type="file" data-slot="material_template" accept=".xlsx,.xls" />上传或替换</label>
+            <div class="files" data-files="material_template"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">产成品入库单模板</div>
+            <label class="drop"><input type="file" data-slot="receipt_template" accept=".xlsx,.xls" />上传或替换</label>
+            <div class="files" data-files="receipt_template"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">原材料配方表</div>
+            <label class="drop"><input type="file" data-slot="recipe_table" accept=".xlsx,.xls" />上传或替换</label>
+            <div class="files" data-files="recipe_table"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">单位换算表</div>
+            <label class="drop"><input type="file" data-slot="conversion_table" accept=".xlsx,.xls" />上传或替换</label>
+            <div class="files" data-files="conversion_table"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="module" id="module1">
+        <div class="module-head">
+          <div class="num">1</div>
+          <div>
+            <h2>订单汇总 → 排产表</h2>
+            <p>生成明天排产表</p>
+          </div>
+          <button class="ghost" data-reset-module="1">清空本模块</button>
+        </div>
+        <div class="module-body">
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">多门店订单 Excel</div>
+              <button class="link" data-reset-slot="module1_orders">重置</button>
+            </div>
+            <label class="drop"><input type="file" multiple data-slot="module1_orders" accept=".xlsx,.xls" />选择订单</label>
+            <div class="files" data-files="module1_orders"></div>
+          </div>
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">群里文字加单</div>
+              <button class="link" data-reset-slot="module1_extra_text">重置</button>
+            </div>
+            <textarea data-text-slot="module1_extra_text" placeholder="海天黄豆酱2箱，鸡汤鲜肉馄饨再加3箱"></textarea>
+            <div class="actions">
+              <button class="secondary" id="parseOrder">AI 识别</button>
+              <button class="primary" id="generateProduction">生成排产表</button>
+            </div>
+            <div class="confirm hidden" id="orderConfirm"></div>
+          </div>
+          <div class="result" id="productionResult"></div>
+        </div>
+      </section>
+
+      <section class="module" id="module2">
+        <div class="module-head">
+          <div class="num">2</div>
+          <div>
+            <h2>排产表 → 材料出库单</h2>
+            <p>50% 筛选、配方、换算、向上取整</p>
+          </div>
+          <button class="ghost" data-reset-module="2">清空本模块</button>
+        </div>
+        <div class="module-body">
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">已填好的排产表</div>
+              <button class="link" data-reset-slot="module2_production">重置</button>
+            </div>
+            <label class="drop"><input type="file" data-slot="module2_production" accept=".xlsx,.xls" />选择排产表</label>
+            <div class="files" data-files="module2_production"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">50% 使用字段</div>
+            <div class="segmented">
+              <label><input type="radio" name="stockField" value="inventory" checked />盘点库存</label>
+              <label><input type="radio" name="stockField" value="theory_stock" />理论库存</label>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">车间现有原料数量</div>
+              <button class="link" data-reset-slot="module2_stock_text">重置</button>
+            </div>
+            <textarea data-text-slot="module2_stock_text" placeholder="猪肉馅 20斤，面皮 500张"></textarea>
+            <div class="actions">
+              <button class="primary" id="generateMaterial">生成材料出库单</button>
+            </div>
+          </div>
+          <div class="result" id="materialResult"></div>
+        </div>
+      </section>
+
+      <section class="module" id="module3">
+        <div class="module-head">
+          <div class="num">3</div>
+          <div>
+            <h2>产成品入库单</h2>
+            <p>拍照接口预留，当前可手动确认</p>
+          </div>
+          <button class="ghost" data-reset-module="3">清空本模块</button>
+        </div>
+        <div class="module-body">
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">车间产量照片</div>
+              <button class="link" data-reset-slot="module3_photos">重置</button>
+            </div>
+            <label class="drop"><input type="file" multiple data-slot="module3_photos" accept="image/*" />选择照片</label>
+            <div class="files" data-files="module3_photos"></div>
+          </div>
+          <div class="field">
+            <div class="field-title">入库确认行</div>
+            <div class="mini-table" id="receiptRows"></div>
+            <div class="actions">
+              <button class="secondary" id="addReceiptRow">添加一行</button>
+              <button class="primary" id="generateReceipt">生成入库单</button>
+            </div>
+          </div>
+          <div class="result" id="receiptResult"></div>
+        </div>
+      </section>
+
+      <section class="module" id="module4">
+        <div class="module-head">
+          <div class="num">4</div>
+          <div>
+            <h2>发货单</h2>
+            <p>按门店导出</p>
+          </div>
+          <button class="ghost" data-reset-module="4">清空本模块</button>
+        </div>
+        <div class="module-body">
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">原始订单 Excel</div>
+              <button class="link" data-reset-slot="module4_orders">重置</button>
+            </div>
+            <label class="drop"><input type="file" multiple data-slot="module4_orders" accept=".xlsx,.xls" />选择订单</label>
+            <div class="files" data-files="module4_orders"></div>
+          </div>
+          <div class="field">
+            <div class="field-row">
+              <div class="field-title">群里文字发货</div>
+              <button class="link" data-reset-slot="module4_ship_text">重置</button>
+            </div>
+            <textarea data-text-slot="module4_ship_text" placeholder="鼓楼店再发馄饨5箱，振兴学校加发豆浆10箱"></textarea>
+            <div class="actions">
+              <button class="secondary" id="parseShipment">AI 识别</button>
+              <button class="primary" id="generateShipment">生成发货单</button>
+            </div>
+            <div class="confirm hidden" id="shipmentConfirm"></div>
+          </div>
+          <div class="result" id="shipmentResult"></div>
+        </div>
+      </section>
+    </main>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

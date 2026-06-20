@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>馄饨侯订单工具 — 界面设计</title>
+<style>
+  :root{
+    --ink:#1f2421;
+    --muted:#6b726d;
+    --line:#e3e1d8;
+    --paper:#f7f5ef;
+    --card:#ffffff;
+    --broth:#c2703d;        /* 馄饨汤色 主色 */
+    --broth-soft:#f6e9df;
+    --ai:#5a6f8c;           /* AI 口子用的蓝灰 */
+    --ai-soft:#e7ecf2;
+    --green:#5f7a52;
+    --green-soft:#eaf0e4;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+    line-height:1.6;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:40px 20px 80px;}
+
+  header{margin-bottom:8px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .bowl{width:40px;height:40px;border-radius:50%;background:var(--broth);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;flex-shrink:0;}
+  h1{font-size:24px;margin:0;font-weight:700;letter-spacing:.5px;}
+  .sub{color:var(--muted);font-size:14px;margin:6px 0 0 52px;}
+
+  .rule{height:1px;background:var(--line);margin:28px 0;}
+
+  .module{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:0;margin-bottom:24px;overflow:hidden;
+  }
+  .m-head{
+    display:flex;align-items:center;gap:12px;
+    padding:18px 22px;border-bottom:1px solid var(--line);
+    background:var(--broth-soft);
+  }
+  .m-num{
+    width:30px;height:30px;border-radius:8px;background:var(--broth);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;
+  }
+  .m-title{font-size:17px;font-weight:700;}
+  .m-flow{font-size:13px;color:var(--muted);margin-left:auto;}
+
+  .m-body{padding:20px 22px;}
+  .field-label{font-size:13px;color:var(--muted);margin:0 0 8px;display:flex;align-items:center;gap:6px;}
+  .step-n{display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--paper);
+    border:1px solid var(--line);font-size:11px;text-align:center;line-height:17px;color:var(--muted);}
+
+  /* 上传/拖拽框 */
+  .drop{
+    border:1.5px dashed #cfccc0;border-radius:10px;background:#fbfaf6;
+    padding:18px;text-align:center;color:var(--muted);font-size:14px;margin-bottom:18px;
+    cursor:pointer;transition:.15s;
+  }
+  .drop:hover{border-color:var(--broth);color:var(--broth);background:#fdf6f0;}
+  .drop .ic{font-size:22px;display:block;margin-bottom:4px;}
+  .filechip{
+    display:inline-flex;align-items:center;gap:8px;background:var(--green-soft);
+    color:var(--green);border-radius:8px;padding:6px 12px;font-size:13px;margin-top:10px;
+  }
+
+  /* 子项头部：标签 + 重置按钮 一行 */
+  .field-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px;}
+  .field-head .field-label{margin:0;}
+  .reset-btn{font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;
+    display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:6px;}
+  .reset-btn:hover{color:var(--broth);background:var(--broth-soft);}
+
+  /* 已保存常驻条（配方表/换算表这种不变的） */
+  .saved{
+    display:flex;align-items:center;gap:10px;background:var(--green-soft);
+    border:1px solid #cfe0c2;border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:13px;
+  }
+  .saved .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;}
+  .saved .s-name{font-weight:600;color:var(--green);}
+  .saved .s-meta{color:var(--muted);margin-left:auto;font-size:12px;}
+  .saved .s-reset{font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--line);
+    border-radius:6px;padding:3px 9px;cursor:pointer;}
+
+  /* 旧文件日期警示 */
+  .stale{
+    display:flex;align-items:center;gap:8px;background:#fdf6e9;border:1px solid #f0e2c4;
+    border-radius:10px;padding:11px 14px;margin-bottom:18px;font-size:13px;color:#9a6a25;
+  }
+  .stale .s-name{font-weight:600;}
+  .stale .s-reset{margin-left:auto;font-size:12px;color:#9a6a25;background:#fff;
+    border:1px solid #f0e2c4;border-radius:6px;padding:3px 9px;cursor:pointer;}
+
+  /* 模块整体重置（放头部右侧） */
+  .m-reset{font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--line);
+    border-radius:7px;padding:4px 10px;cursor:pointer;margin-left:12px;}
+  .m-reset:hover{color:var(--broth);border-color:var(--broth);}
+
+  /* 文本框 */
+  textarea{
+    width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;
+    font-family:inherit;font-size:14px;resize:vertical;min-height:72px;background:#fbfaf6;
+  }
+  textarea:focus{outline:none;border-color:var(--ai);}
+  .ai-tag{display:inline-flex;align-items:center;gap:5px;background:var(--ai-soft);color:var(--ai);
+    font-size:12px;padding:2px 9px;border-radius:20px;font-weight:600;}
+
+  /* AI 解析确认条 */
+  .ai-confirm{
+    border:1px solid var(--ai);border-radius:10px;background:var(--ai-soft);
+    padding:12px 14px;margin:12px 0 18px;font-size:13px;
+  }
+  .ai-confirm .row{display:flex;align-items:center;gap:8px;padding:5px 0;}
+  .ai-confirm .name{font-weight:600;color:var(--ink);}
+  .badge{font-size:11px;padding:1px 8px;border-radius:6px;font-weight:600;}
+  .b-new{background:var(--green-soft);color:var(--green);}
+  .b-add{background:#f2e3cf;color:#9a6a25;}
+  .confirm-btns{display:flex;gap:8px;margin-top:10px;}
+  .mini{font-size:12px;padding:4px 12px;border-radius:7px;border:1px solid var(--line);
+    background:#fff;cursor:pointer;}
+  .mini.ok{background:var(--ai);color:#fff;border-color:var(--ai);}
+
+  /* 简易输入行 */
+  .inrow{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:14px;}
+  .inrow input{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;background:#fbfaf6;}
+  .inrow input:focus{outline:none;border-color:var(--broth);}
+
+  /* 生成按钮 */
+  .gen{
+    width:100%;background:var(--broth);color:#fff;border:none;border-radius:10px;
+    padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px;
+    display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;
+  }
+  .gen:hover{background:#a95d2f;}
+  .out-hint{font-size:12px;color:var(--muted);text-align:center;margin-top:10px;}
+  .out-hint b{color:var(--broth);}
+
+  .note{font-size:12px;color:#a38f6b;background:#fdf6e9;border:1px solid #f0e2c4;
+    border-radius:8px;padding:8px 12px;margin-top:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="bowl">馄</div>
+      <div>
+        <h1>馄饨侯订单工具</h1>
+      </div>
+    </div>
+    <p class="sub">四个模块，各做各的。每步生成一个 Excel，存好，下一步再传进去。</p>
+  </header>
+
+  <div class="rule"></div>
+
+  <!-- 模块 1 -->
+  <section class="module">
+    <div class="m-head">
+      <div class="m-num">1</div>
+      <div class="m-title">订单汇总 → 排产表</div>
+      <div class="m-flow">出明天的排产表</div>
+      <button class="m-reset">↺ 清空本模块</button>
+    </div>
+    <div class="m-body">
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">1</span>拖入多门店订单 Excel（可多个）</p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <div class="stale">
+        <span>⚠</span><span class="s-name">这是昨天的订单（6月19日）</span>，确认要用吗？换新的请重置。
+        <button class="s-reset">↺ 换文件</button>
+      </div>
+      <div class="drop">
+        <span class="ic">⬆</span>
+        把订单 Excel 拖到这里，或点击选择
+        <div><span class="filechip">✓ 鼓楼店订单_6月20日.xlsx</span> <span class="filechip">✓ 振兴学校_6月20日.xlsx</span></div>
+      </div>
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">2</span>群里文字加单 <span class="ai-tag">✦ AI 识别</span></p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <textarea placeholder="把群里临时报货的文字粘进来，比如：海天黄豆酱2箱，刚才那个馄饨再加3箱…">@李天诺 海天黄豆酱2箱，学校订多了
+鸡汤鲜肉馄饨再加3箱</textarea>
+
+      <div class="ai-confirm">
+        <div style="font-weight:600;margin-bottom:6px;color:var(--ai);">AI 识别出这几条，对吗？</div>
+        <div class="row"><span class="name">海天黄豆酱</span> × 2箱 <span class="badge b-new">新增</span></div>
+        <div class="row"><span class="name">鸡汤鲜肉馄饨</span> × 3箱 <span class="badge b-add">加货</span></div>
+        <div class="confirm-btns">
+          <button class="mini ok">✓ 没错，并入汇总</button>
+          <button class="mini">手动改一下</button>
+        </div>
+      </div>
+
+      <button class="gen">生成排产表</button>
+      <p class="out-hint">导出 <b>排产表.xlsx</b> · 排产量 = 安全库存数（全产品都列）· <b>盘点库存、安全库存、入库</b>三列留空给您填</p>
+    </div>
+  </section>
+
+  <!-- 模块 2 -->
+  <section class="module">
+    <div class="m-head">
+      <div class="m-num">2</div>
+      <div class="m-title">排产表 → 领料单</div>
+      <div class="m-flow">算实际要领多少料</div>
+      <button class="m-reset">↺ 清空本模块</button>
+    </div>
+    <div class="m-body">
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">1</span>上传填好的排产表</p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <div class="drop"><span class="ic">⬆</span>上传排产表
+        <div><span class="filechip">✓ 排产表_6月20日.xlsx</span></div>
+      </div>
+
+      <p class="field-label"><span class="step-n">2</span>原料配方表 <span style="font-size:12px;color:var(--muted);">（已存，不用每次传）</span></p>
+      <div class="saved">
+        <span class="dot"></span><span class="s-name">原料配方表.xlsx</span>
+        <span class="s-meta">3天前上传 · 一直在用</span>
+        <button class="s-reset">↺ 换新的</button>
+      </div>
+
+      <p class="field-label"><span class="step-n">3</span>单位换算表 <span style="font-size:12px;color:var(--muted);">（已存，不用每次传）</span></p>
+      <div class="saved">
+        <span class="dot"></span><span class="s-name">单位换算表.xlsx</span>
+        <span class="s-meta">3天前上传 · 一直在用</span>
+        <button class="s-reset">↺ 换新的</button>
+      </div>
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">4</span>车间现有原料数量</p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <textarea placeholder="填一下车间现在还剩多少料，比如：猪肉馅 20斤，面皮 500张…"></textarea>
+
+      <button class="gen" style="margin-top:18px;">生成领料单</button>
+      <p class="out-hint">导出 <b>领料单.xlsx</b> · 只列库存≤安全库存一半的产品 · 用量按整件向上取整（1.5升→2瓶）</p>
+    </div>
+  </section>
+
+  <!-- 模块 3 -->
+  <section class="module">
+    <div class="m-head">
+      <div class="m-num">3</div>
+      <div class="m-title">产成品入库单</div>
+      <div class="m-flow">拍照识别产量</div>
+      <button class="m-reset">↺ 清空本模块</button>
+    </div>
+    <div class="m-body">
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">1</span>上传车间实际生产的照片 <span class="ai-tag">✦ AI 识别</span></p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <div class="drop"><span class="ic">📷</span>上传生产现场照片，AI 自动认出做了多少
+        <div><span class="filechip">✓ 车间生产_6月20日.jpg</span></div>
+      </div>
+
+      <button class="gen">生成入库单</button>
+      <p class="out-hint">导出 <b>入库单.xlsx</b></p>
+    </div>
+  </section>
+
+  <!-- 模块 4 -->
+  <section class="module">
+    <div class="m-head">
+      <div class="m-num">4</div>
+      <div class="m-title">发货单</div>
+      <div class="m-flow">按门店各出一张</div>
+      <button class="m-reset">↺ 清空本模块</button>
+    </div>
+    <div class="m-body">
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">1</span>上传原始订单</p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <div class="drop"><span class="ic">⬆</span>上传订单（发货单跟订单一个格式）
+        <div><span class="filechip">✓ 订单_6月20日.xlsx</span></div>
+      </div>
+
+      <div class="field-head">
+        <p class="field-label"><span class="step-n">2</span>群里文字发货 <span class="ai-tag">✦ AI 识别</span></p>
+        <button class="reset-btn">↺ 重置</button>
+      </div>
+      <textarea placeholder="把群里临时发货的文字粘进来，AI 自动分到对应门店…">鼓楼店再发馄饨5箱
+振兴学校加发豆浆10箱</textarea>
+
+      <div class="ai-confirm">
+        <div style="font-weight:600;margin-bottom:6px;color:var(--ai);">AI 分到这几家门店，对吗？</div>
+        <div class="row"><span class="name">鼓楼店</span> · 鸡汤鲜肉馄饨 × 5箱</div>
+        <div class="row"><span class="name">振兴学校</span> · 豆浆 × 10箱</div>
+        <div class="confirm-btns">
+          <button class="mini ok">✓ 没错，并入发货</button>
+          <button class="mini">手动改一下</button>
+        </div>
+      </div>
+
+      <button class="gen">生成发货单</button>
+      <p class="out-hint">导出 <b>发货单.xlsx</b> · 每个门店单独一张</p>
+    </div>
+  </section>
+
+  <p class="note">说明：上传的东西都自动存到云端，下次进来还在，换电脑也在。配方表、换算表存一次长期用；订单、文字、照片这种每天换的会留着上次的，但会提示日期，记得换新的。每项都能单独「重置」，整个模块也能一键「清空」。</p>
+
+</div>
+</body>
+</html>
