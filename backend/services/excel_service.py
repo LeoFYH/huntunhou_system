@@ -594,7 +594,7 @@ def generate_material_issue_workbook(
         if current is None:
             current = float(inventory) + float(inbound) - float(outbound)
         current = float(current)
-        if current > float(safety) * 0.5:
+        if current >= float(safety) * 0.5:
             continue
         production_qty = row.get("production") or safety
         for recipe in recipe_by_product.get(row["product_key"], []):
