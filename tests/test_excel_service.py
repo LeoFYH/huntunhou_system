@@ -4,7 +4,7 @@ import pytest
 
 from openpyxl import Workbook
 
-from backend.services.excel_service import aggregate_orders, parse_recipe_table, parse_rows, recipe_required_qty, safety_stock_map
+from backend.services.excel_service import aggregate_orders, parse_recipe_table, parse_rows, recipe_required_qty, safety_stock_map, summarize_recipe_tables
 
 
 def save_order(path: Path) -> None:
@@ -65,3 +65,7 @@ def test_parse_feed_sheet_recipe(tmp_path: Path) -> None:
     assert recipes[0]["raw"] == "面粉"
     assert recipes[0]["qty"] == 0.2
     assert recipe_required_qty(recipes[0], 10) == pytest.approx(2.4)
+    summary = summarize_recipe_tables([path])
+    assert summary["file_count"] == 1
+    assert summary["product_count"] == 1
+    assert summary["recipe_rows"] == 1

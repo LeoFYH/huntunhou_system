@@ -4,6 +4,7 @@ import math
 import re
 import zipfile
 from collections import defaultdict
+from collections import Counter
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -645,6 +646,61 @@ def parse_recipe_tables(paths: list[Path]) -> list[dict[str, Any]]:
     for path in paths:
         recipes.extend(parse_recipe_table(path))
     return recipes
+
+
+def summarize_recipe_tables(paths: list[Path]) -> dict[str, Any]:
+    files = []
+    total_rows = 0
+    total_products: Counter[str] = Counter()
+    for path in paths:
+        workbook_rows = 0
+        workbook_products: Counter[str] = Counter()
+        unrecognized_sheets: list[str] = []
+        try:
+            wb = load_workbook(path, data_only=False)
+        except Exception as exc:
+            files.append(
+                {
+                    "name": path.name,
+                    "recipe_rows": 0,
+                    "products": [],
+                    "unrecognized_sheets": [],
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        for ws in wb.worksheets:
+            rows = _parse_feed_sheet(ws)
+            if rows:
+                workbook_rows += len(rows)
+                workbook_products.update(row["finished"] for row in rows)
+            elif last_nonempty_row(ws) > 1 or normalize_text(ws["A1"].value):
+                unrecognized_sheets.append(ws.title)
+
+        if workbook_rows == 0:
+            fallback_rows = parse_recipe_table(path)
+            workbook_rows = len(fallback_rows)
+            workbook_products.update(row["finished"] for row in fallback_rows)
+
+        total_rows += workbook_rows
+        total_products.update(workbook_products)
+        files.append(
+            {
+                "name": path.name,
+                "recipe_rows": workbook_rows,
+                "products": [{"name": name, "rows": count} for name, count in workbook_products.most_common()],
+                "unrecognized_sheets": unrecognized_sheets,
+            }
+        )
+
+    return {
+        "file_count": len(paths),
+        "recipe_rows": total_rows,
+        "product_count": len(total_products),
+        "products": [{"name": name, "rows": count} for name, count in total_products.most_common()],
+        "files": files,
+    }
 
 
 def recipe_required_qty(recipe: dict[str, Any], production_qty: float) -> float:

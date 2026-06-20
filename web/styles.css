@@ -370,6 +370,16 @@ button {
   margin-top: 8px;
 }
 
+.recipe-preview {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.recipe-preview strong {
+  color: var(--green);
+}
+
 .notice,
 .download {
   border-radius: 8px;

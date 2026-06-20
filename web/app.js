@@ -60,11 +60,31 @@ function renderState() {
   renderFiles();
   renderText();
   $("#apiState").textContent = "已连接";
+  refreshRecipePreview().catch(() => {});
 }
 
 async function loadState() {
   appState = await request("/api/state");
   renderState();
+}
+
+async function refreshRecipePreview() {
+  const target = $("#recipePreview");
+  if (!target) return;
+  const preview = await request("/api/recipe-preview");
+  if (!preview.file_count) {
+    target.innerHTML = "";
+    return;
+  }
+  const productNames = preview.products.slice(0, 8).map((item) => item.name).join("、");
+  const unrecognized = preview.files.flatMap((file) =>
+    (file.unrecognized_sheets || []).map((sheet) => `${file.name}/${sheet}`),
+  );
+  target.innerHTML = `
+    <div>已识别 <strong>${preview.file_count}</strong> 个文件、<strong>${preview.product_count}</strong> 个成品、<strong>${preview.recipe_rows}</strong> 条配料。</div>
+    ${productNames ? `<div>示例成品：${productNames}</div>` : ""}
+    ${unrecognized.length ? `<div class="notice">未识别 sheet：${unrecognized.slice(0, 6).join("、")}</div>` : ""}
+  `;
 }
 
 async function uploadFiles(slot, files) {

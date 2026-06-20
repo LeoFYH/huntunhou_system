@@ -17,6 +17,7 @@ from .services.excel_service import (
     generate_receipt_workbook,
     generate_shipment_outputs,
     parse_rows,
+    summarize_recipe_tables,
 )
 from .storage import (
     ensure_storage,
@@ -71,6 +72,11 @@ async def health() -> dict[str, str]:
 @app.get("/api/state")
 async def state() -> dict[str, Any]:
     return public_state()
+
+
+@app.get("/api/recipe-preview")
+async def recipe_preview() -> dict[str, Any]:
+    return summarize_recipe_tables(slot_paths("recipe_table"))
 
 
 @app.post("/api/upload/{slot}")
