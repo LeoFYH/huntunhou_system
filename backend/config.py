@@ -18,3 +18,4 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 ROBOT_API_BASE = os.getenv("ROBOT_API_BASE", "").rstrip("/")
 ROBOT_API_TIMEOUT_SECONDS = float(os.getenv("ROBOT_API_TIMEOUT_SECONDS", "20"))
+ROBOT_API_TOKEN = os.getenv("ROBOT_API_TOKEN", "")

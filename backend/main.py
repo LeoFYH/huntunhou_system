@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from datetime import date, datetime
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -21,10 +22,13 @@ from .services.excel_service import (
 )
 from .services.robot_service import fetch_robot_orders, mark_robot_orders_fetched
 from .storage import (
+    clear_robot_mark_failures,
     ensure_storage,
     output_path,
     public_state,
+    record_robot_mark_failures,
     register_output,
+    robot_mark_failures,
     reset_module,
     reset_slot,
     save_text,
@@ -50,6 +54,11 @@ class AiTextPayload(BaseModel):
 class GeneratePayload(BaseModel):
     confirmed_items: list[dict[str, Any]] = []
     robot_order_ids: list[Any] = []
+    target_date: str | None = None
+
+
+class RobotRetryPayload(BaseModel):
+    ids: list[Any] | None = None
 
 
 class MaterialPayload(BaseModel):
@@ -81,12 +90,77 @@ async def recipe_preview() -> dict[str, Any]:
     return summarize_recipe_tables(slot_paths("recipe_table"))
 
 
+def _parse_target_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"target_date 格式无效：{value}")
+
+
+def _uploaded_order_stores() -> set[str]:
+    stores: set[str] = set()
+    for path in slot_paths("module1_orders"):
+        try:
+            for row in parse_rows(path, "order"):
+                store = str(row.get("store") or "").strip()
+                if store:
+                    stores.add(store)
+        except Exception:
+            continue
+    return stores
+
+
+def _robot_failure_ids() -> list[Any]:
+    ids: list[Any] = []
+    seen: set[str] = set()
+    for failure in robot_mark_failures():
+        for item in failure.get("ids", []):
+            key = str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            ids.append(item)
+    return ids
+
+
 @app.get("/api/robot/orders/fetch")
 async def robot_fetch_orders(status: str = "new") -> dict[str, Any]:
     try:
-        return await fetch_robot_orders(status=status)
+        return await fetch_robot_orders(status=status, extra_base_stores=_uploaded_order_stores())
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/robot/orders/retry-mark")
+async def retry_robot_mark(payload: RobotRetryPayload) -> dict[str, Any]:
+    ids = payload.ids if payload.ids is not None else _robot_failure_ids()
+    if not ids:
+        return {"robot_mark": {"skipped": True, "ids": []}, "warnings": []}
+    try:
+        result = await mark_robot_orders_fetched(ids)
+    except Exception as exc:
+        clear_robot_mark_failures(ids)
+        record_robot_mark_failures(ids, str(exc), {"action": "retry_mark_fetched"})
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    succeeded = result.get("succeeded", [])
+    failed = result.get("failed", [])
+    attempted = list(succeeded) + list(failed)
+    if attempted:
+        clear_robot_mark_failures(attempted)
+    warnings: list[str] = []
+    if failed:
+        warnings.append(f"订单库仍有 {len(failed)} 个 id 标记失败：{failed}")
+        record_robot_mark_failures(failed, "mark_fetched retry partial failure", {"action": "retry_mark_fetched"})
+    return {"robot_mark": result, "warnings": warnings, "remaining_failures": robot_mark_failures()}
 
 
 @app.post("/api/upload/{slot}")
@@ -174,6 +248,7 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
             safety_path=slot_path("safety_stock"),
             production_template_path=slot_path("production_template"),
             confirmed_items=payload.confirmed_items,
+            target_date=_parse_target_date(payload.target_date),
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)
@@ -181,8 +256,24 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
     if payload.robot_order_ids:
         try:
             robot_mark = await mark_robot_orders_fetched(payload.robot_order_ids)
+            succeeded = robot_mark.get("succeeded", [])
+            failed = robot_mark.get("failed", [])
+            if succeeded:
+                clear_robot_mark_failures(succeeded)
+            if failed:
+                warnings.append(f"排产表已生成，但订单库有 {len(failed)} 个 id 标记失败，可稍后重试：{failed}")
+                record_robot_mark_failures(
+                    failed,
+                    "mark_fetched partial failure",
+                    {"output_id": registered["id"], "output_name": registered["name"]},
+                )
         except Exception as exc:
             warnings.append(f"排产表已生成，但订单库 mark_fetched 失败：{exc}")
+            record_robot_mark_failures(
+                payload.robot_order_ids,
+                str(exc),
+                {"output_id": registered["id"], "output_name": registered["name"]},
+            )
             robot_mark = {"ok": False, "error": str(exc), "ids": payload.robot_order_ids}
     return {"output": registered, "warnings": warnings, "robot_mark": robot_mark}
 
@@ -196,6 +287,7 @@ async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
         output, warnings = generate_shipment_outputs(
             order_paths=order_paths,
             confirmed_items=payload.confirmed_items,
+            target_date=_parse_target_date(payload.target_date),
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)

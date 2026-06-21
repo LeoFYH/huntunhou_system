@@ -3,9 +3,38 @@
 ## 当前仓库
 
 - GitHub: https://github.com/LeoFYH/huntunhou_system
-- 最新相关提交: `47536cc Add robot order fetch integration`
+- 最新相关提交: 以 `git log --oneline -1` 为准
 - 本地项目目录: `D:\huntunhou_system`
 - 本地服务地址: `http://127.0.0.1:8000`
+
+## B 轮已落实的机器人对接要求
+
+1. 鉴权：`ROBOT_API_TOKEN` 已接入。工具请求机器人接口时会带：
+
+```http
+Authorization: Bearer <ROBOT_API_TOKEN>
+```
+
+2. `patch` 加货拒绝规则：某门店有 `patch` 但找不到同门店 `base` 主订单时，该 patch 不并入汇总，也不进入待 `mark_fetched` 的 accepted ids。前端会逐条列出门店和加货内容，例如：
+
+```text
+以下加货找不到对应门店的主订单，请先上传这些门店的主订单：
+· 老三家：鸡腿 20件
+· 振兴学校：豆浆 10箱
+```
+
+同门店主订单来源有两个：机器人本次返回的 `kind=base`，或用户已经在模块 1 上传的主订单 Excel。
+
+3. 日期：排产/发货/同步批次按 `deliver_date` 判断，不用 `created_at`。如果本批机器人返回多个 `deliver_date`，前端会阻止“确认并入本批”，需要机器人侧按到货日期分批返回或用户分批同步。
+
+4. `mark_fetched` partial failure：机器人返回 `{succeeded:[...], failed:[...]}` 时，Excel 已生成结果不回滚；工具会清掉 succeeded、本地记录 failed、前端提示失败 id，并提供重试按钮。重试接口是：
+
+```http
+POST /api/robot/orders/retry-mark
+Content-Type: application/json
+
+{ "ids": [123, 456] }
+```
 
 ## 已完成的基础能力
 
@@ -83,12 +112,14 @@
 ```env
 ROBOT_API_BASE=
 ROBOT_API_TIMEOUT_SECONDS=20
+ROBOT_API_TOKEN=
 ```
 
 实际联调时设置：
 
 ```env
 ROBOT_API_BASE=http://机器人地址
+ROBOT_API_TOKEN=和机器人一致的共享 token
 ```
 
 ### 新增后端文件
@@ -102,7 +133,8 @@ ROBOT_API_BASE=http://机器人地址
 - 按门店聚合展示
 - 生成模块 1 可直接使用的 `confirmed_items`
 - 生成待回调的机器人订单 `ids`
-- `patch` 找不到同门店 `base` 时给 warning
+- `patch` 找不到同门店 `base` 或本地已上传主订单门店时直接拒绝，并返回 `rejected_patches`
+- 收集 `deliver_date`，单日期时返回 `target_deliver_date`，多日期时返回 `blocking_reasons`
 
 ### 新增后端接口
 
@@ -206,17 +238,20 @@ POST /api/generate/production
 ```http
 POST {ROBOT_API_BASE}/api/orders/mark_fetched
 Content-Type: application/json
+Authorization: Bearer <ROBOT_API_TOKEN>
 
 { "ids": [123, 456] }
 ```
 
 如果排产生成失败，不会 mark fetched。
 
-如果排产生成成功但 mark_fetched 失败：
+如果排产生成成功但 mark_fetched 全部或部分失败：
 
 - Excel 仍然生成。
 - 前端 warnings 会提示 mark_fetched 失败。
-- 机器人侧订单仍保持 new，下次可重拉。
+- `succeeded` 会从本地失败记录里清掉。
+- `failed` 会记录到本地 `settings.robot_mark_failures`。
+- 前端会给失败 id 一个“重试标记”按钮，调用 `POST /api/robot/orders/retry-mark`。
 
 ## 前端已加功能
 
@@ -257,7 +292,10 @@ Content-Type: application/json
 - base/patch 订单标准化
 - 按门店分组
 - code 为空或 `#N/A` 时按 name 对齐
-- patch 找不到 base 时产生 warning
+- patch 找不到同门店主订单时进入 `rejected_patches`，不进入汇总
+- 本地已上传主订单门店可让同门店 patch 挂靠
+- 多个 `deliver_date` 会产生阻断原因
+- 机器人请求会带 Bearer token
 
 ## 需要 Claude/机器人侧确认或配合
 
@@ -265,19 +303,9 @@ Content-Type: application/json
 2. `items[].qty` 是否一定是数字或可转数字字符串。
 3. `items[].code` 缺失时是否为 `null`、空字符串、`#N/A` 之一。
 4. `kind=patch` 是否一定有 `store`。
-5. `POST /api/orders/mark_fetched` 是否幂等。
-6. 如果 mark_fetched 部分 id 成功、部分失败，返回格式怎么设计。
-7. 是否需要机器人接口鉴权，例如 token/header。如果需要，本工具还要加：
-
-```env
-ROBOT_API_TOKEN=
-```
-
-并在请求头里带：
-
-```http
-Authorization: Bearer xxx
-```
+5. `POST /api/orders/mark_fetched` 建议保持幂等，方便工具侧重试失败 id。
+6. `mark_fetched` partial failure 格式已按 `{succeeded:[...], failed:[...]}` 接入。
+7. 机器人接口鉴权已按 Bearer token 接入。
 
 ## 当前未做
 
@@ -293,6 +321,6 @@ Authorization: Bearer xxx
 1. 最终 JSON schema 是否和上面一致。
 2. `base` / `patch` 的挂靠是否只按 `store` 就够。
 3. mark_fetched 是否需要批次号或只传 ids。
-4. 是否需要鉴权。
+4. `ROBOT_API_TOKEN` 是否已经和机器人侧使用同一个值。
 5. 如果要避免重复生成，机器人侧是否保证 `status=new` 不返回已 fetched 的订单。
 6. 后续是否需要本工具保存一份 fetch 批次日志。

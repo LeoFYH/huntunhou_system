@@ -33,6 +33,7 @@ DEEPSEEK_API_KEY=你的 key
 DEEPSEEK_API_BASE=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 ROBOT_API_BASE=http://127.0.0.1:9000
+ROBOT_API_TOKEN=机器人共享 token
 ```
 
 未配置 key 时，页面会使用本地弱解析并提示人工核对。
@@ -44,7 +45,16 @@ ROBOT_API_BASE=http://127.0.0.1:9000
 - `GET {ROBOT_API_BASE}/api/orders?status=new`
 - `POST {ROBOT_API_BASE}/api/orders/mark_fetched`，body 为 `{"ids":[...]}`
 
+配置 `ROBOT_API_TOKEN` 后，请求会带 `Authorization: Bearer <ROBOT_API_TOKEN>`。
+
 页面模块 1 的“从订单库同步”只拉取已识别、已核验订单，展示本批全貌；用户确认并生成排产表成功后，后端再调用 `mark_fetched`，避免生成失败时误标记。
+
+订单库同步规则：
+
+- 排产/发货日期按机器人返回的 `deliver_date`，不用消息 `created_at`。
+- `patch` 加货必须能挂到同门店主订单；同门店主订单可以来自本次机器人 base，也可以来自用户已上传的订单 Excel。
+- 找不到同门店主订单的 `patch` 会被拒绝并在前端列出门店和加货内容，不进入汇总。
+- `mark_fetched` 若返回 `{succeeded:[...], failed:[...]}`，Excel 不受影响；失败 id 会本地记录，前端可点按钮重试标记。
 
 ## 数据保存
 

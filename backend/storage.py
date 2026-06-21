@@ -123,6 +123,43 @@ def public_state() -> dict[str, Any]:
     }
 
 
+def record_robot_mark_failures(failed_ids: list[Any], reason: str, context: dict[str, Any] | None = None) -> None:
+    if not failed_ids:
+        return
+    state = load_state()
+    failures = state.setdefault("settings", {}).setdefault("robot_mark_failures", [])
+    failures.append(
+        {
+            "ids": failed_ids,
+            "reason": reason,
+            "context": context or {},
+            "created_at": now_iso(),
+        }
+    )
+    save_state(state)
+
+
+def robot_mark_failures() -> list[dict[str, Any]]:
+    failures = load_state().get("settings", {}).get("robot_mark_failures", [])
+    return failures if isinstance(failures, list) else []
+
+
+def clear_robot_mark_failures(success_ids: list[Any]) -> None:
+    if not success_ids:
+        return
+    success_set = {str(item) for item in success_ids}
+    state = load_state()
+    failures = state.setdefault("settings", {}).setdefault("robot_mark_failures", [])
+    kept = []
+    for failure in failures:
+        remaining = [item for item in failure.get("ids", []) if str(item) not in success_set]
+        if remaining:
+            failure["ids"] = remaining
+            kept.append(failure)
+    state["settings"]["robot_mark_failures"] = kept
+    save_state(state)
+
+
 async def save_upload(slot: str, upload: UploadFile) -> dict[str, Any]:
     state = load_state()
     file_id = uuid.uuid4().hex
