@@ -25,7 +25,7 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 
 同门店主订单来源有两个：机器人本次返回的 `kind=base`，或用户已经在模块 1 上传的主订单 Excel。
 
-3. 日期：排产/发货/同步批次按 `deliver_date` 判断，不用 `created_at`。如果本批机器人返回多个 `deliver_date`，前端会阻止“确认并入本批”，需要机器人侧按到货日期分批返回或用户分批同步。
+3. 日期：Web 工具已经改成按 `order_date`（下单日期）归批，不用 `created_at`，也不用 `deliver_date` 分批。`deliver_date` 只作为可选备注。一次拉取混有多个 `order_date` 时，前端会按下单日期拆成多个批次，用户选择某个批次生成排产表。
 
 4. `mark_fetched` partial failure：机器人返回 `{succeeded:[...], failed:[...]}` 时，Excel 已生成结果不回滚；工具会清掉 succeeded、本地记录 failed、前端提示失败 id，并提供重试按钮。重试接口是：
 
@@ -133,8 +133,8 @@ ROBOT_API_TOKEN=和机器人一致的共享 token
 - 按门店聚合展示
 - 生成模块 1 可直接使用的 `confirmed_items`
 - 生成待回调的机器人订单 `ids`
-- `patch` 找不到同门店 `base` 或本地已上传主订单门店时直接拒绝，并返回 `rejected_patches`
-- 收集 `deliver_date`，单日期时返回 `target_deliver_date`，多日期时返回 `blocking_reasons`
+- `patch` 找不到同下单日期、同门店 `base` 或本地已上传主订单门店时直接拒绝，并返回 `rejected_patches`
+- 收集 `order_date`，返回 `order_dates` 和按下单日期拆好的 `batches`
 
 ### 新增后端接口
 
@@ -159,6 +159,8 @@ GET {ROBOT_API_BASE}/api/orders?status=new
       "source": "excel|photo",
       "store": "鼓楼店",
       "order_no": "...",
+      "order_date": "2026-06-21",
+      "deliver_date": "明早送（可选备注）",
       "items": [
         {
           "code": "05020094",
@@ -194,7 +196,18 @@ GET {ROBOT_API_BASE}/api/orders?status=new
       "category": "馄饨",
       "source": "robot",
       "robot_order_id": 123,
-      "order_kind": "base"
+      "order_kind": "base",
+      "order_date": "2026-06-21"
+    }
+  ],
+  "order_dates": ["2026-06-21"],
+  "batches": [
+    {
+      "order_date": "2026-06-21",
+      "ids": [123, 456],
+      "items": [],
+      "grouped": [],
+      "counts": { "orders": 2, "items": 1, "stores": 1 }
     }
   ],
   "grouped": [
@@ -229,9 +242,12 @@ POST /api/generate/production
 ```json
 {
   "confirmed_items": [],
-  "robot_order_ids": [123, 456]
+  "robot_order_ids": [123, 456],
+  "order_date": "2026-06-21"
 }
 ```
+
+排产表代表这个 `order_date` 下单日期的一批，文件名为 `排产表_2026-06-21.xlsx`，表内日期单元格也写 `2026-06-21`。
 
 只有排产表成功生成后，后端才调用：
 
@@ -265,13 +281,14 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 
 1. 用户点击“从订单库同步”。
 2. 前端调 `GET /api/robot/orders/fetch`。
-3. 页面展示“订单库本批全貌”：
+3. 页面展示“订单库同步结果”：
    - 订单数
-   - 门店数
+   - 下单日期数
    - 行数
-   - 按门店分组的商品数量
-4. 用户点“确认并入本批”。
-5. 数据并入模块 1 的待生成数据。
+   - 按 `order_date` 拆开的批次
+   - 每个批次内按门店分组的商品数量
+4. 用户选择某个下单日期批次，点“确认并入此批”。
+5. 该批次数据并入模块 1 的待生成数据。
 6. 用户点“生成排产表”。
 7. 生成成功后才 mark_fetched。
 
@@ -280,7 +297,7 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 当前测试通过：
 
 ```text
-4 passed
+以当前 `pytest -q` 输出为准。
 ```
 
 新增测试文件：
@@ -292,9 +309,9 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 - base/patch 订单标准化
 - 按门店分组
 - code 为空或 `#N/A` 时按 name 对齐
-- patch 找不到同门店主订单时进入 `rejected_patches`，不进入汇总
+- patch 找不到同下单日期、同门店主订单时进入 `rejected_patches`，不进入汇总
 - 本地已上传主订单门店可让同门店 patch 挂靠
-- 多个 `deliver_date` 会产生阻断原因
+- 多个 `order_date` 会拆成多个批次，不再阻断确认
 - 机器人请求会带 Bearer token
 
 ## 需要 Claude/机器人侧确认或配合
@@ -302,10 +319,11 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 1. `GET /api/orders?status=new` 是否稳定返回上述 JSON。
 2. `items[].qty` 是否一定是数字或可转数字字符串。
 3. `items[].code` 缺失时是否为 `null`、空字符串、`#N/A` 之一。
-4. `kind=patch` 是否一定有 `store`。
-5. `POST /api/orders/mark_fetched` 建议保持幂等，方便工具侧重试失败 id。
-6. `mark_fetched` partial failure 格式已按 `{succeeded:[...], failed:[...]}` 接入。
-7. 机器人接口鉴权已按 Bearer token 接入。
+4. `kind=patch` 是否一定有 `store` 和 `order_date`。
+5. `order_date` 是否稳定为 `YYYY-MM-DD`。
+6. `POST /api/orders/mark_fetched` 建议保持幂等，方便工具侧重试失败 id。
+7. `mark_fetched` partial failure 格式已按 `{succeeded:[...], failed:[...]}` 接入。
+8. 机器人接口鉴权已按 Bearer token 接入。
 
 ## 当前未做
 
@@ -319,7 +337,7 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 请帮忙确认机器人侧接口细节：
 
 1. 最终 JSON schema 是否和上面一致。
-2. `base` / `patch` 的挂靠是否只按 `store` 就够。
+2. `base` / `patch` 的挂靠是否按 `order_date + store` 即可。
 3. mark_fetched 是否需要批次号或只传 ids。
 4. `ROBOT_API_TOKEN` 是否已经和机器人侧使用同一个值。
 5. 如果要避免重复生成，机器人侧是否保证 `status=new` 不返回已 fetched 的订单。

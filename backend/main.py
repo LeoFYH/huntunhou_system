@@ -54,7 +54,7 @@ class AiTextPayload(BaseModel):
 class GeneratePayload(BaseModel):
     confirmed_items: list[dict[str, Any]] = []
     robot_order_ids: list[Any] = []
-    target_date: str | None = None
+    order_date: str | None = None
 
 
 class RobotRetryPayload(BaseModel):
@@ -90,7 +90,7 @@ async def recipe_preview() -> dict[str, Any]:
     return summarize_recipe_tables(slot_paths("recipe_table"))
 
 
-def _parse_target_date(value: str | None) -> date | None:
+def _parse_order_date(value: str | None) -> date | None:
     if not value:
         return None
     text = value.strip()
@@ -102,7 +102,7 @@ def _parse_target_date(value: str | None) -> date | None:
         try:
             return datetime.fromisoformat(text).date()
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"target_date 格式无效：{value}")
+            raise HTTPException(status_code=400, detail=f"order_date 格式无效：{value}")
 
 
 def _uploaded_order_stores() -> set[str]:
@@ -248,7 +248,7 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
             safety_path=slot_path("safety_stock"),
             production_template_path=slot_path("production_template"),
             confirmed_items=payload.confirmed_items,
-            target_date=_parse_target_date(payload.target_date),
+            order_date=_parse_order_date(payload.order_date),
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)
@@ -287,7 +287,7 @@ async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
         output, warnings = generate_shipment_outputs(
             order_paths=order_paths,
             confirmed_items=payload.confirmed_items,
-            target_date=_parse_target_date(payload.target_date),
+            order_date=_parse_order_date(payload.order_date),
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)

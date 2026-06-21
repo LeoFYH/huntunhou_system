@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections import Counter
 from copy import copy
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -292,7 +292,7 @@ def generate_production_workbook(
     safety_path: Path | None,
     production_template_path: Path | None,
     confirmed_items: list[dict[str, Any]] | None,
-    target_date: date | None,
+    order_date: date | None,
     output_dir: Path,
 ) -> tuple[Path, list[str]]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -344,11 +344,7 @@ def generate_production_workbook(
             }
         )
 
-    base_date = date.today()
-    delivery_date = base_date + timedelta(days=1)
-    if target_date:
-        delivery_date = target_date
-        base_date = target_date - timedelta(days=1)
+    workbook_date = order_date or date.today()
     if production_template_path:
         wb = load_workbook(production_template_path)
         ws = wb.worksheets[0]
@@ -378,13 +374,9 @@ def generate_production_workbook(
             for c in range(1, max_col + 1):
                 ws.cell(r, c).value = None
         cols = table.columns
-        for cell in ("G2", "I2", "J2"):
+        for cell in ("G2", "I2", "J2", "K2", "L2"):
             if ws[cell].value is not None:
-                ws[cell].value = base_date
-        if ws["K2"].value is not None:
-            ws["K2"].value = delivery_date
-        if ws["L2"].value is not None:
-            ws["L2"].value = delivery_date
+                ws[cell].value = workbook_date
         for offset, item in enumerate(rows):
             r = data_start + offset
             values = {
@@ -427,7 +419,7 @@ def generate_production_workbook(
                     display_number(item["production"]),
                 ]
             )
-    output = output_dir / f"排产表_{delivery_date.isoformat()}.xlsx"
+    output = output_dir / f"排产表_{workbook_date.isoformat()}.xlsx"
     wb.save(output)
     return output, warnings
 
@@ -453,7 +445,7 @@ def _best_order_sheet(path: Path):
 def generate_shipment_outputs(
     order_paths: list[Path],
     confirmed_items: list[dict[str, Any]] | None,
-    target_date: date | None,
+    order_date: date | None,
     output_dir: Path,
 ) -> tuple[Path, list[str]]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -481,7 +473,7 @@ def generate_shipment_outputs(
         warnings.append("没有可生成发货单的订货数量或确认发货文本。")
 
     generated: list[Path] = []
-    output_date = (target_date or date.today()).isoformat()
+    output_date = (order_date or date.today()).isoformat()
     first_template = order_paths[0] if order_paths else None
     for store, products in store_products.items():
         template = store_template.get(store) or first_template

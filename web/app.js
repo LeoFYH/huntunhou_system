@@ -4,10 +4,10 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let appState = {};
 let confirmedOrderItems = [];
 let confirmedShipmentItems = [];
-let robotFetchedItems = [];
-let robotFetchedIds = [];
+let robotFetchedBatches = [];
+let acceptedRobotItems = [];
 let acceptedRobotOrderIds = [];
-let acceptedRobotDeliverDate = "";
+let acceptedRobotOrderDate = "";
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -228,55 +228,76 @@ function renderDownload(target, data) {
 
 function renderRobotFetch(data) {
   const target = $("#robotFetchResult");
-  robotFetchedItems = data.items || [];
-  robotFetchedIds = data.ids || [];
+  robotFetchedBatches = data.batches || [];
+  acceptedRobotItems = [];
   acceptedRobotOrderIds = [];
-  acceptedRobotDeliverDate = "";
+  acceptedRobotOrderDate = "";
 
   const warnings = data.warnings || [];
   const rejectedPatches = data.rejected_patches || [];
-  const blockingReasons = data.blocking_reasons || [];
   const counts = data.counts || {};
+  const orderDates = data.order_dates || [];
   let html = "";
 
   warnings.forEach((warning) => {
     html += `<div class="notice">${escapeHtml(warning)}</div>`;
   });
-  blockingReasons.forEach((reason) => {
-    html += `<div class="notice">${escapeHtml(reason)}</div>`;
-  });
+  if (orderDates.length > 1) {
+    html += `<div class="notice">本次包含 ${orderDates.length} 个下单日期，已按下单日期拆成多个批次，请选择其中一个批次生成排产表。</div>`;
+  }
   if (rejectedPatches.length) {
     const rejectedRows = rejectedPatches
       .map((patch) => {
         const content = (patch.items || [])
           .map((item) => item.label || `${item.name} ${item.qty || ""}${item.unit || ""}`)
           .join("、");
-        return `<li>${escapeHtml(patch.store)}：${escapeHtml(content || "未填写商品")}</li>`;
+        const dateLabel = patch.order_date ? `${patch.order_date} · ` : "";
+        return `<li>${escapeHtml(dateLabel)}${escapeHtml(patch.store)}：${escapeHtml(content || "未填写商品")}</li>`;
       })
       .join("");
     html += `<div class="notice">以下加货找不到对应门店的主订单，请先上传这些门店的主订单：<ul>${rejectedRows}</ul></div>`;
   }
 
-  if (!robotFetchedItems.length) {
+  if (!robotFetchedBatches.length) {
     target.innerHTML = `${html}<div class="notice">订单库没有可并入的待处理订单。</div>`;
     return;
   }
 
-  const canAccept = !blockingReasons.length;
-  const groups = (data.grouped || [])
-    .map((group) => {
-      const items = (group.items || [])
-        .slice(0, 18)
-        .map((item) => `<li>${escapeHtml(item.name)} × ${escapeHtml(item.quantity)}${escapeHtml(item.unit || "")}</li>`)
+  const batchPanels = robotFetchedBatches
+    .map((batch, index) => {
+      const batchGroups = (batch.grouped || [])
+        .map((group) => {
+          const items = (group.items || [])
+            .slice(0, 18)
+            .map((item) => `<li>${escapeHtml(item.name)} × ${escapeHtml(item.quantity)}${escapeHtml(item.unit || "")}</li>`)
+            .join("");
+          const more = (group.items || []).length > 18 ? `<li>还有 ${(group.items || []).length - 18} 条...</li>` : "";
+          return `
+            <div class="robot-store">
+              <div class="robot-store-title">
+                <span>${escapeHtml(group.store)}</span>
+                <span>${(group.orders || []).length} 单 · ${(group.items || []).length} 个品</span>
+              </div>
+              <ul>${items}${more}</ul>
+            </div>
+          `;
+        })
         .join("");
-      const more = (group.items || []).length > 18 ? `<li>还有 ${(group.items || []).length - 18} 条...</li>` : "";
+      const batchCounts = batch.counts || {};
+      const orderDate = batch.order_date || "";
+      const canAccept = Boolean(orderDate);
       return `
-        <div class="robot-store">
-          <div class="robot-store-title">
-            <span>${escapeHtml(group.store)}</span>
-            <span>${(group.orders || []).length} 单 · ${(group.items || []).length} 个品</span>
+        <div class="robot-panel">
+          <div class="robot-panel-head">
+            <span>下单日期 ${escapeHtml(orderDate || "未填写")}</span>
+            <span>${batchCounts.orders || 0} 单 · ${batchCounts.stores || 0} 门店 · ${batchCounts.items || 0} 行</span>
           </div>
-          <ul>${items}${more}</ul>
+          ${batchGroups}
+          <div class="actions">
+            <button class="primary" data-accept-robot-batch data-batch-index="${index}" ${canAccept ? "" : "disabled"}>
+              ${canAccept ? "确认并入此批" : "缺少下单日期，不能并入"}
+            </button>
+          </div>
         </div>
       `;
     })
@@ -286,16 +307,12 @@ function renderRobotFetch(data) {
     ${html}
     <div class="robot-panel">
       <div class="robot-panel-head">
-        <span>订单库本批全貌</span>
-        <span>${counts.orders || 0} 单 · ${counts.stores || 0} 门店 · ${counts.items || 0} 行${data.target_deliver_date ? ` · 到货 ${escapeHtml(data.target_deliver_date)}` : ""}</span>
-      </div>
-      ${groups}
-      <div class="actions">
-        <button class="primary" id="acceptRobotFetch" ${canAccept ? "" : "disabled"}>确认并入本批</button>
+        <span>订单库同步结果</span>
+        <span>${counts.orders || 0} 单 · ${counts.order_dates || 0} 个下单日期 · ${counts.items || 0} 行</span>
       </div>
     </div>
+    ${batchPanels}
   `;
-  target.dataset.deliverDate = data.target_deliver_date || "";
 }
 
 function receiptRow(item = {}) {
@@ -351,7 +368,7 @@ document.addEventListener("click", async (event) => {
   const removeRow = event.target.closest("[data-remove-row]");
   const addConfirm = event.target.closest("[data-add-confirm-row]");
   const acceptConfirm = event.target.closest("[data-accept-confirm]");
-  const acceptRobotFetch = event.target.closest("#acceptRobotFetch");
+  const acceptRobotBatch = event.target.closest("[data-accept-robot-batch]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
   if (resetSlot) {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
@@ -384,12 +401,19 @@ document.addEventListener("click", async (event) => {
     if (includeStore) confirmedShipmentItems = items;
     else confirmedOrderItems = items;
     container.classList.add("hidden");
-  } else if (acceptRobotFetch) {
-    confirmedOrderItems = [...confirmedOrderItems, ...robotFetchedItems];
-    acceptedRobotOrderIds = [...robotFetchedIds];
-    acceptedRobotDeliverDate = $("#robotFetchResult").dataset.deliverDate || "";
-    acceptRobotFetch.disabled = true;
-    acceptRobotFetch.textContent = "已并入，生成排产表后标记已拉取";
+  } else if (acceptRobotBatch) {
+    const batch = robotFetchedBatches[Number(acceptRobotBatch.dataset.batchIndex)];
+    if (!batch) return;
+    acceptedRobotItems = batch.items || [];
+    acceptedRobotOrderIds = batch.ids || [];
+    acceptedRobotOrderDate = batch.order_date || "";
+    $$("[data-accept-robot-batch]").forEach((button) => {
+      const currentBatch = robotFetchedBatches[Number(button.dataset.batchIndex)];
+      button.disabled = !currentBatch?.order_date;
+      button.textContent = "确认并入此批";
+    });
+    acceptRobotBatch.disabled = true;
+    acceptRobotBatch.textContent = "已选择，生成排产表后标记已拉取";
   } else if (retryRobotMark) {
     const notice = retryRobotMark.closest(".notice");
     let ids = [];
@@ -458,14 +482,16 @@ $("#generateProduction").addEventListener("click", async () => {
     const data = await request("/api/generate/production", {
       method: "POST",
       body: JSON.stringify({
-        confirmed_items: confirmedOrderItems,
+        confirmed_items: [...confirmedOrderItems, ...acceptedRobotItems],
         robot_order_ids: acceptedRobotOrderIds,
-        target_date: acceptedRobotDeliverDate || null,
+        order_date: acceptedRobotOrderDate || null,
       }),
     });
     renderDownload($("#productionResult"), data);
     if (data.robot_mark && data.robot_mark.ok !== false) {
+      acceptedRobotItems = [];
       acceptedRobotOrderIds = [];
+      acceptedRobotOrderDate = "";
     }
   } catch (error) {
     $("#productionResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;

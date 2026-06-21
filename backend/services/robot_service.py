@@ -35,27 +35,50 @@ def _item_label(item: dict[str, Any]) -> str:
     return f"{name} {qty}{unit}"
 
 
+def _order_date(order: dict[str, Any]) -> str:
+    return str(order.get("order_date") or "").strip()
+
+
+def _new_grouped() -> dict[str, dict[str, Any]]:
+    return {}
+
+
+def _new_counts() -> dict[str, int]:
+    return {"orders": 0, "items": 0, "stores": 0, "base": 0, "patch": 0, "other": 0}
+
+
+def _grouped_list(grouped: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "store": bucket["store"],
+            "orders": bucket["orders"],
+            "items": sorted(bucket["items"].values(), key=lambda item: item["name"]),
+        }
+        for bucket in grouped.values()
+    ]
+
+
 def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] | None = None) -> dict[str, Any]:
     orders = payload.get("orders") or []
     extra_base_stores = extra_base_stores or set()
-    base_stores = {
-        str(order.get("store") or "").strip()
+    base_keys = {
+        (_order_date(order), str(order.get("store") or "").strip())
         for order in orders
         if order.get("kind") == "base" and str(order.get("store") or "").strip()
     }
-    attachable_stores = base_stores | extra_base_stores
     all_ids: list[Any] = []
     accepted_ids: list[Any] = []
     items: list[dict[str, Any]] = []
     warnings: list[str] = []
     rejected_patches: list[dict[str, Any]] = []
-    grouped: dict[str, dict[str, Any]] = {}
+    grouped = _new_grouped()
+    batches: dict[str, dict[str, Any]] = {}
     kind_counts = {"base": 0, "patch": 0, "other": 0}
-    deliver_dates = sorted(
+    order_dates = sorted(
         {
-            str(order.get("deliver_date") or "").strip()
+            _order_date(order)
             for order in orders
-            if str(order.get("deliver_date") or "").strip()
+            if _order_date(order)
         }
     )
 
@@ -66,14 +89,17 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
         kind = str(order.get("kind") or "other")
         kind_counts[kind if kind in kind_counts else "other"] += 1
         store = str(order.get("store") or "未填写门店").strip()
+        order_date = _order_date(order)
+        delivery_note = order.get("deliver_date", "")
         raw_items = order.get("items") or []
 
-        if kind == "patch" and store not in attachable_stores:
+        if kind == "patch" and (order_date, store) not in base_keys and store not in extra_base_stores:
             rejected_patches.append(
                 {
                     "id": order_id,
                     "store": store,
-                    "deliver_date": order.get("deliver_date", ""),
+                    "order_date": order_date,
+                    "delivery_note": delivery_note,
                     "items": [
                         {
                             "name": str(item.get("name") or item.get("product") or "").strip(),
@@ -83,13 +109,29 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
                         }
                         for item in raw_items
                     ],
-                    "message": f"{store} 有加货，但没有找到 {store} 今天的主订单 Excel。",
+                    "message": f"{store} 有加货，但没有找到 {store} {order_date or '未填写下单日期'} 的主订单 Excel。",
                 }
             )
             continue
 
         if order_id is not None and order_id not in accepted_ids:
             accepted_ids.append(order_id)
+
+        batch = batches.setdefault(
+            order_date,
+            {
+                "order_date": order_date,
+                "ids": [],
+                "items": [],
+                "grouped": _new_grouped(),
+                "counts": _new_counts(),
+            },
+        )
+        if order_id is not None and order_id not in batch["ids"]:
+            batch["ids"].append(order_id)
+        batch_kind = kind if kind in {"base", "patch"} else "other"
+        batch["counts"]["orders"] += 1
+        batch["counts"][batch_kind] += 1
 
         store_bucket = grouped.setdefault(store, {"store": store, "orders": [], "items": {}})
         store_bucket["orders"].append(
@@ -98,7 +140,19 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
                 "kind": kind,
                 "source": order.get("source", ""),
                 "order_no": order.get("order_no", ""),
-                "deliver_date": order.get("deliver_date", ""),
+                "order_date": order_date,
+                "delivery_note": delivery_note,
+            }
+        )
+        batch_store_bucket = batch["grouped"].setdefault(store, {"store": store, "orders": [], "items": {}})
+        batch_store_bucket["orders"].append(
+            {
+                "id": order_id,
+                "kind": kind,
+                "source": order.get("source", ""),
+                "order_no": order.get("order_no", ""),
+                "order_date": order_date,
+                "delivery_note": delivery_note,
             }
         )
 
@@ -124,9 +178,11 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
                 "robot_order_id": order_id,
                 "order_kind": kind,
                 "order_no": order.get("order_no", ""),
-                "deliver_date": order.get("deliver_date", ""),
+                "order_date": order_date,
+                "delivery_note": delivery_note,
             }
             items.append(normalized)
+            batch["items"].append(normalized)
 
             key = _item_key(raw_item)
             current = store_bucket["items"].setdefault(
@@ -141,15 +197,35 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
                 },
             )
             current["quantity"] += float(qty)
+            batch_current = batch_store_bucket["items"].setdefault(
+                key,
+                {
+                    "code": normalized["code"],
+                    "name": name,
+                    "spec": normalized["spec"],
+                    "unit": normalized["unit"],
+                    "category": normalized["category"],
+                    "quantity": 0.0,
+                },
+            )
+            batch_current["quantity"] += float(qty)
 
-    grouped_list = [
-        {
-            "store": bucket["store"],
-            "orders": bucket["orders"],
-            "items": sorted(bucket["items"].values(), key=lambda item: item["name"]),
-        }
-        for bucket in grouped.values()
-    ]
+    grouped_list = _grouped_list(grouped)
+    batch_list = []
+    for batch in sorted(batches.values(), key=lambda item: item["order_date"] or "9999-99-99"):
+        batch_grouped = _grouped_list(batch["grouped"])
+        batch_counts = dict(batch["counts"])
+        batch_counts["items"] = len(batch["items"])
+        batch_counts["stores"] = len(batch_grouped)
+        batch_list.append(
+            {
+                "order_date": batch["order_date"],
+                "ids": batch["ids"],
+                "items": batch["items"],
+                "grouped": batch_grouped,
+                "counts": batch_counts,
+            }
+        )
 
     return {
         "ids": accepted_ids,
@@ -158,13 +234,13 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
         "grouped": grouped_list,
         "warnings": warnings,
         "rejected_patches": rejected_patches,
-        "deliver_dates": deliver_dates,
-        "target_deliver_date": deliver_dates[0] if len(deliver_dates) == 1 else None,
-        "blocking_reasons": ["订单库返回了多个到货日期，请按 deliver_date 分批同步。"] if len(deliver_dates) > 1 else [],
+        "order_dates": order_dates,
+        "batches": batch_list,
         "counts": {
             "orders": len(orders),
             "items": len(items),
             "stores": len(grouped_list),
+            "order_dates": len(order_dates),
             "rejected_patches": len(rejected_patches),
             **kind_counts,
         },

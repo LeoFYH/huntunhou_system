@@ -105,23 +105,21 @@ Authorization: Bearer <ROBOT_API_TOKEN>
 · 振兴学校：豆浆 10箱
 ```
 
-## 五、deliver_date 日期规则
+## 五、order_date 下单日期规则
 
-已改为使用机器人返回的 `deliver_date` 判断排产/同步批次，不使用 `created_at`。
+已改为使用机器人返回的 `order_date`（下单日期）判断排产/同步批次，不使用 `created_at`，也不使用 `deliver_date` 分批。
 
 规则：
 
-- 单一 `deliver_date`：前端允许“确认并入本批”，生成排产表时后端使用该日期作为到货日期。
-- 多个 `deliver_date`：前端阻止“确认并入本批”，要求按到货日期分批同步。
+- 单一 `order_date`：前端显示一个批次，用户确认后生成该下单日期的排产表。
+- 多个 `order_date`：前端按下单日期拆成多个批次，不阻断同步；用户选择其中一个批次生成排产表。
+- `deliver_date`：只作为可选备注，不参与归批、确认、排产日期和文件名。
 
 排产表日期逻辑：
 
-- `delivery_date = deliver_date`
-- 模板里的明天/到货日期单元格写入 `delivery_date`
-- 模板里的当天/制单相关日期写入 `delivery_date - 1 天`
-- 输出文件名使用 `排产表_{delivery_date}.xlsx`
-
-发货生成函数也已预留 `target_date` 参数，后续如果机器人发货流也传 `deliver_date`，可以直接沿用。
+- `workbook_date = order_date`
+- 模板日期单元格统一写入 `order_date`
+- 输出文件名使用 `排产表_{order_date}.xlsx`
 
 ## 六、mark_fetched 部分失败处理
 
@@ -161,15 +159,15 @@ Content-Type: application/json
 - `backend/services/robot_service.py`
   - 机器人 GET/POST 请求带 Bearer token
   - 标准化机器人订单 JSON
-  - 拒绝无同门店主订单的 patch
+  - 拒绝无同下单日期、同门店主订单的 patch
   - 返回 `rejected_patches`
-  - 返回 `deliver_dates` / `target_deliver_date` / `blocking_reasons`
+  - 返回 `order_dates` 和按下单日期拆好的 `batches`
   - 兼容 `mark_fetched` 的 `{succeeded, failed}` 返回
 
 - `backend/main.py`
   - `/api/robot/orders/fetch`
   - `/api/robot/orders/retry-mark`
-  - 排产生成接收 `target_date`
+  - 排产生成接收 `order_date`
   - 生成成功后 mark_fetched，失败不影响 Excel
 
 - `backend/storage.py`
@@ -177,24 +175,23 @@ Content-Type: application/json
   - 成功后清理 failed ids
 
 - `backend/services/excel_service.py`
-  - 排产表按 `target_date/deliver_date` 写日期和文件名
-  - 发货生成函数预留 `target_date`
+  - 排产表按 `order_date` 写日期和文件名
 
 - `web/app.js`
   - 前端订单库同步展示
   - 无主订单 patch 明确列出
-  - 多 deliver_date 阻止确认并入
+  - 多 order_date 拆成多个可选择批次
   - mark_fetched 失败 id 可重试
   - 页面加载时显示历史失败 id 重试入口
 
 - `tests/test_robot_service.py`
   - 覆盖 patch 拒绝
   - 覆盖本地已上传主订单门店可挂 patch
-  - 覆盖多 deliver_date 阻断
+  - 覆盖多 order_date 分批且不阻断
   - 覆盖 Bearer token header
 
 - `README.md`
-  - 更新机器人接口、token、patch、deliver_date、partial failure 规则
+  - 更新机器人接口、token、patch、order_date、partial failure 规则
 
 - `docs/Claude_订单库对接进展.md`
   - 更新给 Claude/机器人侧的对接说明
@@ -212,7 +209,7 @@ node --check web\app.js
 结果：
 
 ```text
-7 passed
+9 passed
 ```
 
 接口烟测：
@@ -227,8 +224,7 @@ POST /api/robot/orders/retry-mark {"ids":[]} -> skipped
 1. `GET /api/orders?status=new` 最终 JSON schema 是否固定。
 2. `kind=base` / `kind=patch` 是否稳定提供。
 3. `store` 是否是 patch 挂靠主订单的唯一依据。
-4. `deliver_date` 是否稳定为 `YYYY-MM-DD`。
-5. 机器人侧是否按 `deliver_date` 分批返回，避免一次返回多个到货日期。
+4. `order_date` 是否稳定为 `YYYY-MM-DD`。
+5. 机器人侧是否保证文字解析优先提取“X.XX订”作为 `order_date`。
 6. `POST /api/orders/mark_fetched` 是否幂等，方便失败 id 重试。
 7. `ROBOT_API_TOKEN` 是否已和 Web 工具配置为同一个值。
-
