@@ -355,3 +355,26 @@ async def mark_robot_orders_fetched(ids: list[Any]) -> dict[str, Any]:
     result.setdefault("failed", [])
     result["ok"] = not result["failed"]
     return result
+
+
+async def unmark_robot_orders(ids: list[Any]) -> dict[str, Any]:
+    if not ids:
+        return {"skipped": True, "ids": []}
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE，无法退回订单。")
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{ROBOT_API_BASE}/api/orders/unmark",
+            json={"ids": ids},
+            headers=_robot_headers(),
+        )
+        response.raise_for_status()
+    if not response.content:
+        return {"ok": True, "succeeded": ids, "failed": []}
+    result = response.json()
+    if "succeeded" not in result and "failed" not in result:
+        result = {"ok": True, "succeeded": ids, "failed": [], "raw": result}
+    result.setdefault("succeeded", [])
+    result.setdefault("failed", [])
+    result["ok"] = not result["failed"]
+    return result

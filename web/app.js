@@ -249,8 +249,16 @@ function renderDownload(target, data) {
   if (data.output) {
     html += `<div class="download"><span>${escapeHtml(data.output.name)}</span><a href="${data.output.url}">下载</a></div>`;
   }
-  if (data.robot_mark && data.robot_mark.ok !== false && !data.robot_mark.skipped) {
-    html += `<div class="download"><span>订单库已标记为已拉取</span></div>`;
+  if (data.robot_mark && !data.robot_mark.skipped) {
+    const lockedIds = data.robot_mark.succeeded || (data.robot_mark.ok !== false ? data.robot_mark.ids || [] : []);
+    if (lockedIds.length) {
+      html += `<div class="download"><span>${lockedIds.length} 张订单已标记为已拉取</span></div>`;
+    }
+    if (lockedIds.length) {
+      const dateLabel = productionBatch.orderDate || selectedDate("#dateModule1");
+      html += `<div class="lockbar"><span>本批已锁定 ${lockedIds.length} 张订单（下单日期 ${escapeHtml(dateLabel)}）。填表期间新来的加货不在这批里。若要把新加货纳进来，点下面退回后重新同步。</span></div>`;
+      html += `<button class="return-btn" data-return-robot-orders="${escapeHtml(JSON.stringify(lockedIds))}">作废本批 · 退回订单</button>`;
+    }
   }
   if (data.robot_mark?.failed?.length) {
     const failedIds = data.robot_mark.failed;
@@ -296,6 +304,7 @@ document.addEventListener("click", async (event) => {
   const resetSlot = event.target.closest("[data-reset-slot]");
   const acceptBatch = event.target.closest("[data-accept-order-batch]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
+  const returnRobotOrders = event.target.closest("[data-return-robot-orders]");
   if (resetSlot) {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
     appState = data.state;
@@ -327,6 +336,37 @@ document.addEventListener("click", async (event) => {
       }
     } catch (error) {
       notice.textContent = error.message;
+    }
+  } else if (returnRobotOrders) {
+    const ids = JSON.parse(returnRobotOrders.dataset.returnRobotOrders || "[]");
+    if (!ids.length) return;
+    const outcome = await runOnce(returnRobotOrders, "正在退回...", async () => {
+      const result = $("#productionResult");
+      try {
+        const data = await request("/api/robot/orders/unmark", {
+          method: "POST",
+          body: JSON.stringify({ ids }),
+        });
+        const failed = data.robot_unmark?.failed || [];
+        const succeeded = data.robot_unmark?.succeeded || [];
+        if (failed.length) {
+          result.innerHTML += `<div class="notice">部分订单退回失败：${failed.map(escapeHtml).join("、")}。成功退回：${succeeded.map(escapeHtml).join("、") || "无"}。</div>`;
+          return;
+        }
+        productionBatch = { items: [], ids: [], orderDate: "" };
+        $("#orderSyncResult").classList.add("hidden");
+        $("#orderSyncResult").innerHTML = "";
+        result.innerHTML += `<div class="download"><span>本批订单已退回为未拉取，请重新同步订单库。</span></div>`;
+        return { ok: true };
+      } catch (error) {
+        result.innerHTML += `<div class="notice">${escapeHtml(error.message)}</div>`;
+        return { ok: false };
+      }
+    });
+    if (outcome?.ok) {
+      returnRobotOrders.disabled = true;
+      returnRobotOrders.textContent = "已退回，请重新同步";
+      returnRobotOrders.removeAttribute("data-return-robot-orders");
     }
   }
 });

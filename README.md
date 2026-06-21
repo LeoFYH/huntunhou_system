@@ -44,10 +44,12 @@ ROBOT_API_TOKEN=机器人共享 token
 
 - `GET {ROBOT_API_BASE}/api/orders?status=new`
 - `POST {ROBOT_API_BASE}/api/orders/mark_fetched`，body 为 `{"ids":[...]}`
+- `POST {ROBOT_API_BASE}/api/orders/unmark`，body 为 `{"ids":[...]}`，把已拉取订单退回为未拉取
 
 配置 `ROBOT_API_TOKEN` 后，请求会带 `Authorization: Bearer <ROBOT_API_TOKEN>`。
 
 页面模块 1 的“同步订单库”只拉取已识别、已核验订单，展示按下单日期拆开的批次；用户确认并生成排产表成功后，后端再调用 `mark_fetched`，避免生成失败时误标记。
+生成待补充排产表后，页面会显示“作废本批 · 退回订单”按钮；退回会调用 `unmark` 解锁本批已成功标记的订单，之后用户手动重新同步，可把期间新增的加货一起纳入最新一批。
 
 订单库同步规则：
 
@@ -58,6 +60,7 @@ ROBOT_API_TOKEN=机器人共享 token
 - `patch` 加货必须能挂到同下单日期、同门店主订单。
 - 找不到同门店主订单的 `patch` 会被拒绝并在前端列出门店和加货内容，不进入汇总。
 - `mark_fetched` 若返回 `{succeeded:[...], failed:[...]}`，Excel 不受影响；失败 id 会本地记录，前端可点按钮重试标记。
+- `unmark` 建议同样返回 `{succeeded:[...], failed:[...]}` 并保持幂等；已经是 `new` 的 id 再退回也算 `succeeded`，只有不存在的 id 算 `failed`。
 
 ## 数据保存
 

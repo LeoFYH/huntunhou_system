@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 from tempfile import TemporaryDirectory
 from pathlib import Path
@@ -334,3 +335,7 @@ def test_normalize_robot_receipts_summarizes_finished_goods_without_store() -> N
 def test_robot_headers_include_bearer_token(monkeypatch) -> None:
     monkeypatch.setattr(robot_service, "ROBOT_API_TOKEN", "shared-token")
     assert robot_service._robot_headers() == {"Authorization": "Bearer shared-token"}
+
+
+def test_unmark_robot_orders_skips_empty_ids() -> None:
+    assert asyncio.run(robot_service.unmark_robot_orders([])) == {"skipped": True, "ids": []}

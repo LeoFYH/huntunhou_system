@@ -477,6 +477,34 @@ label.t-reset,
   color: var(--green);
 }
 
+.lockbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #eef4fb;
+  border: 1px solid #c4d6ea;
+  border-radius: 9px;
+  padding: 10px 13px;
+  color: #37597f;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+
+.return-btn {
+  border: 1px solid #f0e2c4;
+  border-radius: 7px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 12px;
+  margin-top: 8px;
+}
+
+.return-btn:hover {
+  background: #f8ecd2;
+}
+
 .download a {
   color: var(--green);
   font-weight: 700;
