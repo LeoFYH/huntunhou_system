@@ -53,15 +53,36 @@
             <p class="tpl-note">安全库存表用于按商品补安全库存数；盘点库存数和入库数仍由用户手填。</p>
           </div>
 
-          <div class="block">
-            <p class="block-label">从订单库同步</p>
-            <button class="sync" id="syncOrders">同步订单库 <span class="ai-tag">AI</span></button>
-            <div class="ai-confirm hidden" id="orderSyncResult"></div>
+          <div class="step-wrap">
+            <div class="step">
+              <span class="step-badge">1</span>
+              <span class="step-t">同步订单 -> 生成待补充排产表</span>
+            </div>
+            <div class="block">
+              <p class="block-label">从订单库同步</p>
+              <button class="sync" id="syncOrders">同步订单库 <span class="ai-tag">AI</span></button>
+              <div class="ai-confirm hidden" id="orderSyncResult"></div>
+            </div>
+            <button class="gen" id="generateProduction">生成待补充排产表</button>
+            <p class="out-hint">导出 <b>排产表_待补充_日期.xlsx</b>，已填商品资料、出库数量、安全库存和理论排产；盘点库存、入库数留给用户手填，理论库存数第二步再算。</p>
+            <div class="result" id="productionResult"></div>
           </div>
 
-          <button class="gen" id="generateProduction">生成排产表</button>
-          <p class="out-hint">导出 <b>排产表_日期.xlsx</b>，安全库存自动匹配，盘点库存和入库数留给用户手填，排产量等于安全库存。</p>
-          <div class="result" id="productionResult"></div>
+          <div class="step-wrap s2">
+            <div class="step">
+              <span class="step-badge">2</span>
+              <span class="step-t">填好后上传 -> 生成完整排产表</span>
+              <span class="step-sub">计算理论库存数</span>
+            </div>
+            <label class="drop">
+              <span>上传填好盘点/入库的排产表</span>
+              <input type="file" id="productionCompleteFile" accept=".xlsx,.xls" />
+            </label>
+            <div class="filechip hidden" id="productionCompleteFileName"></div>
+            <button class="gen ghost-gen" id="generateCompletedProduction">生成完整排产表</button>
+            <p class="out-hint">导出 <b>排产表_日期.xlsx</b>，自动计算 <b>理论库存数 = 盘点库存 + 入库数 - 出库数量</b>。</p>
+            <div class="result" id="productionCompleteResult"></div>
+          </div>
         </div>
       </section>
 

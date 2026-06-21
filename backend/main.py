@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .config import WEB_DIR
 from .services.ai_service import parse_text_with_deepseek
 from .services.excel_service import (
+    generate_completed_production_workbook,
     generate_material_issue_workbook,
     generate_production_workbook,
     generate_receipt_workbook,
@@ -264,6 +265,24 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
             )
             robot_mark = {"ok": False, "error": str(exc), "ids": payload.robot_order_ids}
     return {"output": registered, "warnings": warnings, "robot_mark": robot_mark}
+
+
+@app.post("/api/generate/production-complete-upload")
+async def generate_completed_production(
+    production_file: UploadFile = File(...),
+    document_date: str | None = Form(default=None),
+) -> dict[str, Any]:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        production_path = tmp_dir / (production_file.filename or "production.xlsx")
+        production_path.write_bytes(await production_file.read())
+        output, warnings = generate_completed_production_workbook(
+            production_path=production_path,
+            document_date=_parse_order_date(document_date),
+            output_dir=tmp_dir,
+        )
+        registered = register_output(output, output.name)
+    return {"output": registered, "warnings": warnings}
 
 
 @app.post("/api/generate/shipment")

@@ -158,6 +158,49 @@ h1 {
   padding: 20px 22px;
 }
 
+.step-wrap {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  background: #fcfbf8;
+}
+
+.step-wrap.s2 {
+  border-style: dashed;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.step-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--broth);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.step-t {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.step-sub {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .block + .block,
 .tpl-zone + .block {
   margin-top: 22px;
@@ -383,6 +426,16 @@ label.t-reset,
 
 .gen:hover {
   background: var(--broth-deep);
+}
+
+.ghost-gen {
+  background: #fff;
+  color: var(--broth);
+  border: 1.5px solid var(--broth);
+}
+
+.ghost-gen:hover {
+  background: var(--broth-soft);
 }
 
 .out-hint {

@@ -443,9 +443,6 @@ def generate_production_workbook(
                 ws[cell].value = workbook_date
         for offset, item in enumerate(rows):
             r = data_start + offset
-            inventory_ref = f"{get_column_letter(cols['inventory'])}{r}" if cols.get("inventory") else f"G{r}"
-            inbound_ref = f"{get_column_letter(cols['inbound'])}{r}" if cols.get("inbound") else f"I{r}"
-            outbound_ref = f"{get_column_letter(cols['outbound'])}{r}" if cols.get("outbound") else f"J{r}"
             values = {
                 "sequence": item["sequence"],
                 "category": item["category"],
@@ -458,7 +455,7 @@ def generate_production_workbook(
                 "safety": display_number(item["safety"]),
                 "inbound": None,
                 "outbound": display_number(item["outbound"]),
-                "theory_stock": f"={inventory_ref}+{inbound_ref}-{outbound_ref}" if cols.get("theory_stock") else None,
+                "theory_stock": None,
                 "production": f"={get_column_letter(cols['safety'])}{r}" if cols.get("safety") else None,
             }
             for key, value in values.items():
@@ -487,7 +484,53 @@ def generate_production_workbook(
                     f"=H{row_index}",
                 ]
             )
-    output = output_dir / f"排产表_{workbook_date.isoformat()}.xlsx"
+    output = output_dir / f"排产表_待补充_{workbook_date.isoformat()}.xlsx"
+    wb.save(output)
+    return output, warnings
+
+
+def generate_completed_production_workbook(
+    production_path: Path,
+    document_date: date | None,
+    output_dir: Path,
+) -> tuple[Path, list[str]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
+    wb = load_workbook(production_path, data_only=False)
+    updated_rows = 0
+    skipped_rows = 0
+    for ws in wb.worksheets:
+        table = detect_table(ws, "production")
+        if not table:
+            continue
+        cols = table.columns
+        theory_col = cols.get("theory_stock")
+        inventory_col = cols.get("inventory")
+        inbound_col = cols.get("inbound")
+        outbound_col = cols.get("outbound")
+        product_col = cols.get("product")
+        if not all([theory_col, inventory_col, inbound_col, product_col]):
+            warnings.append(f"{ws.title} 缺少盘点库存数、入库数或理论库存数列，已跳过。")
+            continue
+        for row in range(table.data_start, last_nonempty_row(ws) + 1):
+            if not normalize_text(ws.cell(row, product_col).value):
+                continue
+            inventory = to_number(ws.cell(row, inventory_col).value)
+            inbound = to_number(ws.cell(row, inbound_col).value)
+            outbound = to_number(ws.cell(row, outbound_col).value) if outbound_col else 0.0
+            if inventory is None or inbound is None:
+                skipped_rows += 1
+                ws.cell(row, theory_col).value = None
+                continue
+            theory_stock = float(inventory) + float(inbound) - float(outbound or 0.0)
+            ws.cell(row, theory_col).value = display_number(theory_stock)
+            updated_rows += 1
+    if not updated_rows:
+        warnings.append("没有计算到理论库存数，请确认已上传填好盘点库存数和入库数的排产表。")
+    if skipped_rows:
+        warnings.append(f"有 {skipped_rows} 行缺少盘点库存数或入库数，理论库存数已留空。")
+    output_date = (document_date or date.today()).isoformat()
+    output = output_dir / f"排产表_{output_date}.xlsx"
     wb.save(output)
     return output, warnings
 

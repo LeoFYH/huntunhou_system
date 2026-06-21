@@ -232,6 +232,16 @@ document.addEventListener("change", async (event) => {
       label.classList.add("hidden");
     }
   }
+  if (event.target.id === "productionCompleteFile") {
+    const file = event.target.files?.[0];
+    const label = $("#productionCompleteFileName");
+    if (file) {
+      label.textContent = `已选择 · ${file.name}`;
+      label.classList.remove("hidden");
+    } else {
+      label.classList.add("hidden");
+    }
+  }
 });
 
 document.addEventListener("click", async (event) => {
@@ -338,6 +348,23 @@ $("#generateProduction").addEventListener("click", async () => {
     }
   } catch (error) {
     $("#productionResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+  }
+});
+
+$("#generateCompletedProduction").addEventListener("click", async () => {
+  const file = $("#productionCompleteFile").files?.[0];
+  if (!file) {
+    $("#productionCompleteResult").innerHTML = `<div class="notice">请先上传填好盘点库存数和入库数的排产表。</div>`;
+    return;
+  }
+  const form = new FormData();
+  form.append("production_file", file);
+  form.append("document_date", selectedDate("#dateModule1"));
+  try {
+    const data = await request("/api/generate/production-complete-upload", { method: "POST", body: form });
+    renderDownload($("#productionCompleteResult"), data);
+  } catch (error) {
+    $("#productionCompleteResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
   }
 });
 

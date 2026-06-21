@@ -5,7 +5,7 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from backend.services import robot_service
-from backend.services.excel_service import generate_material_issue_workbook, generate_production_workbook
+from backend.services.excel_service import generate_completed_production_workbook, generate_material_issue_workbook, generate_production_workbook
 from backend.services.robot_service import normalize_robot_orders, normalize_robot_receipts
 
 
@@ -154,11 +154,12 @@ def test_generate_production_workbook_uses_order_date_for_filename() -> None:
             order_date=date(2026, 6, 21),
             output_dir=Path(tmp),
         )
-        assert output.name == "排产表_2026-06-21.xlsx"
+        assert output.name == "排产表_待补充_2026-06-21.xlsx"
         assert output.exists()
         wb = load_workbook(output, data_only=False)
         ws = wb.active
         assert ws["H3"].value is None
+        assert ws["K3"].value is None
         assert ws["L3"].value == "=H3"
 
 
@@ -226,8 +227,32 @@ def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
         ws = wb.active
         assert ws["I4"].value == 80
         assert ws["K4"].value == 3
-        assert ws["L4"].value == "=H4+J4-K4"
+        assert ws["L4"].value is None
         assert ws["M4"].value == "=I4"
+
+
+def test_generate_completed_production_workbook_calculates_theory_stock() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        production_path = tmp_dir / "draft.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["序号", "类别", "编码", "商品名称", "规格", "单位", "单价", "盘点库存数", "安全库存数", "入库数", "出库数量", "理论库存数", "理论排产"])
+        ws.append([1, "馄饨", "T2", "订单商品", "500g", "箱", 9.5, 20, 80, 5, 3, None, "=I2"])
+        wb.save(production_path)
+
+        output, warnings = generate_completed_production_workbook(
+            production_path=production_path,
+            document_date=date(2026, 6, 21),
+            output_dir=tmp_dir,
+        )
+
+        assert warnings == []
+        assert output.name == "排产表_2026-06-21.xlsx"
+        wb = load_workbook(output, data_only=False)
+        ws = wb.active
+        assert ws["L2"].value == 22
+        assert ws["M2"].value == "=I2"
 
 
 def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> None:
