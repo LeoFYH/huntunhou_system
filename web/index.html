@@ -43,6 +43,14 @@
               <label class="t-reset">换新的<input type="file" data-slot="production_template" accept=".xlsx,.xls" /></label>
               <button class="t-reset" data-reset-slot="production_template">重置</button>
             </div>
+            <div class="tpl" data-template="safety_stock_table">
+              <span class="dot"></span>
+              <span class="t-name">安全库存表</span>
+              <span class="t-meta" data-files="safety_stock_table"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="safety_stock_table" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="safety_stock_table">重置</button>
+            </div>
+            <p class="tpl-note">安全库存表用于按商品补安全库存数；盘点库存数和入库数仍由用户手填。</p>
           </div>
 
           <div class="block">
@@ -52,7 +60,7 @@
           </div>
 
           <button class="gen" id="generateProduction">生成排产表</button>
-          <p class="out-hint">导出 <b>排产表_日期.xlsx</b>，盘点库存和安全库存留给用户手填，排产量等于安全库存。</p>
+          <p class="out-hint">导出 <b>排产表_日期.xlsx</b>，安全库存自动匹配，盘点库存和入库数留给用户手填，排产量等于安全库存。</p>
           <div class="result" id="productionResult"></div>
         </div>
       </section>

@@ -24,6 +24,7 @@ MULTI_FILE_SLOTS = {
 
 RESIDENT_SLOTS = {
     "production_template",
+    "safety_stock_table",
     "recipe_table",
     "conversion_table",
     "stock_owner_table",

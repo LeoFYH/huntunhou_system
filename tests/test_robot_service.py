@@ -149,6 +149,7 @@ def test_generate_production_workbook_uses_order_date_for_filename() -> None:
         output, _warnings = generate_production_workbook(
             order_paths=[],
             production_template_path=None,
+            safety_stock_path=None,
             confirmed_items=[{"product": "鸡腿", "quantity": 2, "unit": "件"}],
             order_date=date(2026, 6, 21),
             output_dir=Path(tmp),
@@ -177,6 +178,7 @@ def test_generate_production_workbook_outputs_only_order_items_from_template() -
         output, _warnings = generate_production_workbook(
             order_paths=[],
             production_template_path=template_path,
+            safety_stock_path=None,
             confirmed_items=[{"product": "订单商品", "quantity": 3, "unit": "箱"}],
             order_date=date(2026, 6, 21),
             output_dir=tmp_dir,
@@ -190,6 +192,42 @@ def test_generate_production_workbook_outputs_only_order_items_from_template() -
         assert ws["D5"].value is None
         products = [ws.cell(row, 4).value for row in range(4, ws.max_row + 1) if ws.cell(row, 4).value]
         assert products == ["订单商品"]
+
+
+def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        template_path = tmp_dir / "production_template.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws["A1"] = "排产单"
+        ws["G2"] = "日期"
+        ws.append(["序号", "类别", "编码", "商品名称", "规格", "单位", "单价", "盘点库存数", "安全库存数", "入库数", "出库数量", "理论库存数", "排产量"])
+        ws.append([1, "馄饨", "T2", "订单商品", "500g", "箱", 9.5, None, None, None, None, None, None])
+        wb.save(template_path)
+
+        safety_path = tmp_dir / "safety.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["随便列", "品名", "库存标准"])
+        ws.append(["x", "订单商品", 80])
+        wb.save(safety_path)
+
+        output, _warnings = generate_production_workbook(
+            order_paths=[],
+            production_template_path=template_path,
+            safety_stock_path=safety_path,
+            confirmed_items=[{"product": "订单商品", "quantity": 3, "unit": "箱"}],
+            order_date=date(2026, 6, 21),
+            output_dir=tmp_dir,
+        )
+
+        wb = load_workbook(output, data_only=False)
+        ws = wb.active
+        assert ws["I4"].value == 80
+        assert ws["K4"].value == 3
+        assert ws["L4"].value == "=H4+J4-K4"
+        assert ws["M4"].value == "=I4"
 
 
 def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> None:

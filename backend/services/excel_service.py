@@ -227,17 +227,79 @@ def aggregate_orders(paths: list[Path], confirmed_items: list[dict[str, Any]] | 
     return summary
 
 
+def _store_safety_value(result: dict[str, float], name: Any, qty: Any, code: Any = None) -> None:
+    number = to_number(qty)
+    if number is None:
+        return
+    product_key = normalize_key(name)
+    if product_key:
+        result[product_key] = float(number)
+    code_key = normalize_key(code)
+    if code_key:
+        result[code_key] = float(number)
+
+
+def _fallback_safety_rows(ws, result: dict[str, float]) -> None:
+    last = last_nonempty_row(ws)
+    for row in range(1, last + 1):
+        cells = [(col, ws.cell(row, col).value) for col in range(1, ws.max_column + 1)]
+        text_cells = [
+            (col, value)
+            for col, value in cells
+            if normalize_text(value) and (to_number(value) is None or re.search(r"[A-Za-z\u4e00-\u9fff]", str(value)))
+        ]
+        numeric_cells = [(col, to_number(value)) for col, value in cells if to_number(value) is not None]
+        if not text_cells or not numeric_cells:
+            continue
+        name_col, name = max(text_cells, key=lambda item: len(normalize_text(item[1])))
+        right_numbers = [(col, value) for col, value in numeric_cells if col > name_col]
+        qty = (right_numbers or numeric_cells)[-1][1]
+        _store_safety_value(result, name, qty)
+
+
 def safety_stock_map(path: Path | None) -> dict[str, float]:
     if not path:
         return {}
     result: dict[str, float] = {}
-    for row in parse_rows(path, "safety"):
-        qty = row.get("safety")
-        if qty is None:
-            qty = row.get("qty")
-        if qty is None:
+    wb = load_workbook(path, data_only=True)
+    for ws in wb.worksheets:
+        table = detect_table(ws, "safety")
+        if table and ("safety" in table.columns or "qty" in table.columns):
+            product_col = table.columns["product"]
+            safety_col = table.columns.get("safety") or table.columns.get("qty")
+            code_col = table.columns.get("code")
+            for row in range(table.data_start, last_nonempty_row(ws) + 1):
+                _store_safety_value(
+                    result,
+                    ws.cell(row, product_col).value,
+                    ws.cell(row, safety_col).value,
+                    ws.cell(row, code_col).value if code_col else None,
+                )
             continue
-        result[row["product_key"]] = float(qty)
+
+        header_row = None
+        product_col = None
+        safety_col = None
+        code_col = None
+        for row in range(1, min(last_nonempty_row(ws), 30) + 1):
+            headers = {col: normalize_text(ws.cell(row, col).value) for col in range(1, ws.max_column + 1)}
+            product_col = _find_col(headers, ["商品名称", "产品名称", "物品名称", "存货名称", "原料名称", "品名", "名称"])
+            safety_col = _find_col(headers, ["安全库存数", "安全库存", "库存标准", "标准库存", "安全量"])
+            code_col = _find_col(headers, ["存货编码", "产品编码", "商品编码", "编码"])
+            if product_col and safety_col:
+                header_row = row
+                break
+        if header_row and product_col and safety_col:
+            for row in range(header_row + 1, last_nonempty_row(ws) + 1):
+                _store_safety_value(
+                    result,
+                    ws.cell(row, product_col).value,
+                    ws.cell(row, safety_col).value,
+                    ws.cell(row, code_col).value if code_col else None,
+                )
+            continue
+
+        _fallback_safety_rows(ws, result)
     return result
 
 
@@ -291,6 +353,7 @@ def write_basic_headers(ws, title: str, headers: list[str]) -> None:
 def generate_production_workbook(
     order_paths: list[Path],
     production_template_path: Path | None,
+    safety_stock_path: Path | None,
     confirmed_items: list[dict[str, Any]] | None,
     order_date: date | None,
     output_dir: Path,
@@ -298,6 +361,7 @@ def generate_production_workbook(
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
     orders = aggregate_orders(order_paths, confirmed_items)
+    safety_values = safety_stock_map(safety_stock_path)
 
     catalog_paths = [p for p in [production_template_path, *order_paths] if p]
     catalog = product_catalog(catalog_paths)
@@ -319,6 +383,10 @@ def generate_production_workbook(
     for idx, key in enumerate(keys, 1):
         meta = catalog.get(key, orders[key])
         order_qty = orders.get(key, {}).get("quantity", 0.0)
+        code_key = normalize_key(meta.get("code", ""))
+        safety = safety_values.get(key)
+        if safety is None and code_key:
+            safety = safety_values.get(code_key)
         rows.append(
             {
                 "sequence": idx,
@@ -329,7 +397,7 @@ def generate_production_workbook(
                 "unit": meta.get("unit", ""),
                 "price": meta.get("price"),
                 "inventory": None,
-                "safety": None,
+                "safety": safety,
                 "inbound": None,
                 "outbound": order_qty,
                 "theory_stock_formula": None,

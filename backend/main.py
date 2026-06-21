@@ -234,6 +234,7 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
         output, warnings = generate_production_workbook(
             order_paths=order_paths,
             production_template_path=slot_path("production_template"),
+            safety_stock_path=slot_path("safety_stock_table"),
             confirmed_items=payload.confirmed_items,
             order_date=_parse_order_date(payload.order_date),
             output_dir=Path(tmp),
