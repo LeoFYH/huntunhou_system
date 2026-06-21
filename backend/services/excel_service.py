@@ -341,6 +341,29 @@ def copy_row_format(ws, src_row: int, dst_row: int, max_col: int) -> None:
             dst.font = copy(src.font)
 
 
+def clear_rows_without_shift(ws, start_row: int, end_row: int) -> None:
+    if end_row < start_row:
+        return
+    for merged in list(ws.merged_cells.ranges):
+        if start_row <= merged.min_row and merged.max_row <= end_row:
+            ws.unmerge_cells(str(merged))
+    for key in list(ws._cells):
+        row, _col = key
+        if start_row <= row <= end_row:
+            del ws._cells[key]
+    for row in range(start_row, end_row + 1):
+        ws.row_dimensions.pop(row, None)
+
+
+def trim_blank_tail(ws, keep_last_row: int) -> None:
+    for key, cell in list(ws._cells.items()):
+        row, _col = key
+        if row > keep_last_row and cell.value in (None, ""):
+            del ws._cells[key]
+    for row in [row for row in ws.row_dimensions if row > keep_last_row]:
+        del ws.row_dimensions[row]
+
+
 def write_basic_headers(ws, title: str, headers: list[str]) -> None:
     ws.title = "Sheet1"
     ws.append([title])
@@ -436,7 +459,8 @@ def generate_production_workbook(
                 ws.cell(r, c).value = None
         delete_start = data_start + len(rows)
         if original_last >= delete_start:
-            ws.delete_rows(delete_start, original_last - delete_start + 1)
+            clear_rows_without_shift(ws, delete_start, original_last)
+        trim_blank_tail(ws, max(data_start + len(rows) - 1, table.header_row))
         cols = table.columns
         for cell in ("G2", "I2", "J2", "K2", "L2"):
             if ws[cell].value is not None:

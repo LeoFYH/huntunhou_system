@@ -7,13 +7,31 @@ let receiptItems = [];
 let shipmentBatch = { items: [], orderDate: "" };
 
 async function request(path, options = {}) {
-  const response = await fetch(path, {
-    headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (_error) {
+    throw new Error("后端连接中断或服务无响应，请确认服务正常后重试。");
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.detail || "请求失败");
+  if (!response.ok) throw new Error(data.detail || data.message || `请求失败 (${response.status})`);
   return data;
+}
+
+async function runOnce(button, busyHtml, task) {
+  if (!button || button.disabled) return undefined;
+  const originalHtml = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = busyHtml;
+  try {
+    return await task();
+  } finally {
+    button.disabled = false;
+    button.innerHTML = originalHtml;
+  }
 }
 
 function escapeHtml(value) {
@@ -144,8 +162,34 @@ function renderRejected(rejectedPatches) {
   return `<div class="notice">以下加货找不到同下单日期、同门店主订单，请先处理：<ul>${rows}</ul></div>`;
 }
 
+function clearOrderBatch(mode) {
+  if (mode === "production") {
+    productionBatch = { items: [], ids: [], orderDate: "" };
+  } else {
+    shipmentBatch = { items: [], orderDate: "" };
+  }
+}
+
+function selectOrderBatch(container, batch, mode, button = null) {
+  if (!batch) return;
+  if (mode === "production") {
+    productionBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
+  } else {
+    shipmentBatch = { items: batch.items || [], orderDate: batch.order_date || "" };
+  }
+  $$("[data-accept-order-batch]", container).forEach((item) => {
+    item.disabled = false;
+    item.textContent = "确认此批";
+  });
+  if (button) {
+    button.disabled = true;
+    button.textContent = "已确认";
+  }
+}
+
 function renderOrderBatches(target, data, mode) {
   const batches = data.batches || [];
+  clearOrderBatch(mode);
   let html = "";
   (data.warnings || []).forEach((warning) => {
     html += `<div class="notice">${escapeHtml(warning)}</div>`;
@@ -174,6 +218,10 @@ function renderOrderBatches(target, data, mode) {
   target.dataset.payload = JSON.stringify(batches);
   target.classList.remove("hidden");
   target.innerHTML = html;
+  if (batches.length === 1 && batches[0].order_date) {
+    const autoButton = target.querySelector("[data-accept-order-batch]");
+    selectOrderBatch(target, batches[0], mode, autoButton);
+  }
 }
 
 function renderReceiptSync(data) {
@@ -256,18 +304,7 @@ document.addEventListener("click", async (event) => {
     const container = acceptBatch.closest(".ai-confirm");
     const batches = JSON.parse(container.dataset.payload || "[]");
     const batch = batches[Number(acceptBatch.dataset.batchIndex)];
-    if (!batch) return;
-    if (acceptBatch.dataset.acceptOrderBatch === "production") {
-      productionBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
-    } else {
-      shipmentBatch = { items: batch.items || [], orderDate: batch.order_date || "" };
-    }
-    $$("[data-accept-order-batch]", container).forEach((button) => {
-      button.disabled = false;
-      button.textContent = "确认此批";
-    });
-    acceptBatch.disabled = true;
-    acceptBatch.textContent = "已确认";
+    selectOrderBatch(container, batch, acceptBatch.dataset.acceptOrderBatch, acceptBatch);
   } else if (event.target.closest("#acceptReceiptSync")) {
     const container = $("#receiptSyncResult");
     receiptItems = JSON.parse(container.dataset.payload || "[]");
@@ -296,117 +333,146 @@ document.addEventListener("click", async (event) => {
 
 $("#refreshState").addEventListener("click", loadState);
 
-$("#syncOrders").addEventListener("click", async () => {
-  const target = $("#orderSyncResult");
-  target.classList.remove("hidden");
-  target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
-  try {
-    const data = await request(`/api/robot/orders/fetch?status=new&order_date=${encodeURIComponent(selectedDate("#dateModule1"))}`);
-    renderOrderBatches(target, data, "production");
-  } catch (error) {
-    target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
-});
-
-$("#syncReceipts").addEventListener("click", async () => {
-  const target = $("#receiptSyncResult");
-  target.classList.remove("hidden");
-  target.innerHTML = `<div class="notice">正在同步入库数据...</div>`;
-  try {
-    const data = await request(`/api/robot/receipts/fetch?date=${encodeURIComponent(selectedDate("#dateModule3"))}`);
-    renderReceiptSync(data);
-  } catch (error) {
-    target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
-});
-
-$("#syncShipment").addEventListener("click", async () => {
-  const target = $("#shipmentSyncResult");
-  target.classList.remove("hidden");
-  target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
-  try {
-    const data = await request(`/api/robot/orders/fetch?status=all&order_date=${encodeURIComponent(selectedDate("#dateModule4"))}`);
-    renderOrderBatches(target, data, "shipment");
-  } catch (error) {
-    target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
-});
-
-$("#generateProduction").addEventListener("click", async () => {
-  try {
-    const data = await request("/api/generate/production", {
-      method: "POST",
-      body: JSON.stringify({
-        confirmed_items: productionBatch.items,
-        robot_order_ids: productionBatch.ids,
-        order_date: productionBatch.orderDate || selectedDate("#dateModule1"),
-      }),
-    });
-    renderDownload($("#productionResult"), data);
-    if (data.robot_mark && data.robot_mark.ok !== false) {
-      productionBatch = { items: [], ids: [], orderDate: "" };
+$("#syncOrders").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在同步...`, async () => {
+    const target = $("#orderSyncResult");
+    target.classList.remove("hidden");
+    target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
+    try {
+      const data = await request(`/api/robot/orders/fetch?status=new&order_date=${encodeURIComponent(selectedDate("#dateModule1"))}`);
+      renderOrderBatches(target, data, "production");
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }
-  } catch (error) {
-    $("#productionResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
+  });
 });
 
-$("#generateCompletedProduction").addEventListener("click", async () => {
-  const file = $("#productionCompleteFile").files?.[0];
-  if (!file) {
-    $("#productionCompleteResult").innerHTML = `<div class="notice">请先上传填好盘点库存数和入库数的排产表。</div>`;
-    return;
-  }
-  const form = new FormData();
-  form.append("production_file", file);
-  form.append("document_date", selectedDate("#dateModule1"));
-  try {
-    const data = await request("/api/generate/production-complete-upload", { method: "POST", body: form });
-    renderDownload($("#productionCompleteResult"), data);
-  } catch (error) {
-    $("#productionCompleteResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
+$("#syncReceipts").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在同步...`, async () => {
+    const target = $("#receiptSyncResult");
+    target.classList.remove("hidden");
+    target.innerHTML = `<div class="notice">正在同步入库数据...</div>`;
+    try {
+      const data = await request(`/api/robot/receipts/fetch?date=${encodeURIComponent(selectedDate("#dateModule3"))}`);
+      renderReceiptSync(data);
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
 });
 
-$("#generateMaterial").addEventListener("click", async () => {
-  const file = $("#productionRunFile").files?.[0];
-  if (!file) {
-    $("#materialResult").innerHTML = `<div class="notice">请先上传填好的完整排产表。</div>`;
-    return;
-  }
-  const form = new FormData();
-  form.append("production_file", file);
-  form.append("document_date", selectedDate("#dateModule2"));
-  try {
-    const data = await request("/api/generate/material-issue-upload", { method: "POST", body: form });
-    renderDownload($("#materialResult"), data);
-  } catch (error) {
-    $("#materialResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
+$("#syncShipment").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在同步...`, async () => {
+    const target = $("#shipmentSyncResult");
+    target.classList.remove("hidden");
+    target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
+    try {
+      const data = await request(`/api/robot/orders/fetch?status=all&order_date=${encodeURIComponent(selectedDate("#dateModule4"))}`);
+      renderOrderBatches(target, data, "shipment");
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
 });
 
-$("#generateReceipt").addEventListener("click", async () => {
-  try {
-    const data = await request("/api/generate/receipt", {
-      method: "POST",
-      body: JSON.stringify({ items: receiptItems, document_date: selectedDate("#dateModule3") }),
-    });
-    renderDownload($("#receiptResult"), data);
-  } catch (error) {
-    $("#receiptResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
+$("#generateProduction").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在生成...`, async () => {
+    const target = $("#productionResult");
+    if (!productionBatch.items.length) {
+      target.innerHTML = `<div class="notice">请先同步订单库并确认一个批次。</div>`;
+      return;
+    }
+    target.innerHTML = `<div class="notice">正在生成待补充排产表...</div>`;
+    try {
+      const data = await request("/api/generate/production", {
+        method: "POST",
+        body: JSON.stringify({
+          confirmed_items: productionBatch.items,
+          robot_order_ids: productionBatch.ids,
+          order_date: productionBatch.orderDate || selectedDate("#dateModule1"),
+        }),
+      });
+      renderDownload(target, data);
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
 });
 
-$("#generateShipment").addEventListener("click", async () => {
-  try {
-    const data = await request("/api/generate/shipment", {
-      method: "POST",
-      body: JSON.stringify({ confirmed_items: shipmentBatch.items, order_date: shipmentBatch.orderDate || selectedDate("#dateModule4") }),
-    });
-    renderDownload($("#shipmentResult"), data);
-  } catch (error) {
-    $("#shipmentResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
-  }
+$("#generateCompletedProduction").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在生成...`, async () => {
+    const file = $("#productionCompleteFile").files?.[0];
+    if (!file) {
+      $("#productionCompleteResult").innerHTML = `<div class="notice">请先上传填好盘点库存数和入库数的排产表。</div>`;
+      return;
+    }
+    const form = new FormData();
+    form.append("production_file", file);
+    form.append("document_date", selectedDate("#dateModule1"));
+    try {
+      const data = await request("/api/generate/production-complete-upload", { method: "POST", body: form });
+      renderDownload($("#productionCompleteResult"), data);
+    } catch (error) {
+      $("#productionCompleteResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
+});
+
+$("#generateMaterial").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在生成...`, async () => {
+    const file = $("#productionRunFile").files?.[0];
+    if (!file) {
+      $("#materialResult").innerHTML = `<div class="notice">请先上传填好的完整排产表。</div>`;
+      return;
+    }
+    const form = new FormData();
+    form.append("production_file", file);
+    form.append("document_date", selectedDate("#dateModule2"));
+    try {
+      const data = await request("/api/generate/material-issue-upload", { method: "POST", body: form });
+      renderDownload($("#materialResult"), data);
+    } catch (error) {
+      $("#materialResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
+});
+
+$("#generateReceipt").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在生成...`, async () => {
+    const target = $("#receiptResult");
+    if (!receiptItems.length) {
+      target.innerHTML = `<div class="notice">请先同步入库数据并确认。</div>`;
+      return;
+    }
+    try {
+      const data = await request("/api/generate/receipt", {
+        method: "POST",
+        body: JSON.stringify({ items: receiptItems, document_date: selectedDate("#dateModule3") }),
+      });
+      renderDownload(target, data);
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
+});
+
+$("#generateShipment").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在生成...`, async () => {
+    const target = $("#shipmentResult");
+    if (!shipmentBatch.items.length) {
+      target.innerHTML = `<div class="notice">请先同步订单库并确认发货批次。</div>`;
+      return;
+    }
+    try {
+      const data = await request("/api/generate/shipment", {
+        method: "POST",
+        body: JSON.stringify({ confirmed_items: shipmentBatch.items, order_date: shipmentBatch.orderDate || selectedDate("#dateModule4") }),
+      });
+      renderDownload(target, data);
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
 });
 
 $$("[data-date]").forEach((input) => {
