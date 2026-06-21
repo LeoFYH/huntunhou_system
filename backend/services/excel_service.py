@@ -205,7 +205,7 @@ def aggregate_orders(paths: list[Path], confirmed_items: list[dict[str, Any]] | 
         if not product:
             continue
         qty = to_number(item.get("quantity"))
-        if qty is None:
+        if qty is None or qty == 0:
             continue
         key = normalize_key(product)
         current = summary.setdefault(
@@ -314,15 +314,16 @@ def generate_production_workbook(
             },
         )
 
-    keys = list(catalog.keys())
+    keys = [key for key, order in orders.items() if order.get("quantity")]
     rows = []
     for idx, key in enumerate(keys, 1):
-        meta = catalog[key]
+        meta = catalog.get(key, orders[key])
         order_qty = orders.get(key, {}).get("quantity", 0.0)
         rows.append(
             {
                 "sequence": idx,
                 "category": meta.get("category", ""),
+                "code": meta.get("code", ""),
                 "product": meta.get("product", ""),
                 "spec": meta.get("spec", ""),
                 "unit": meta.get("unit", ""),
@@ -360,20 +361,27 @@ def generate_production_workbook(
         )
         max_col = max(12, ws.max_column)
         data_start = max(4, table.data_start)
-        clear_to = max(last_nonempty_row(ws), data_start + len(rows) + 5)
-        for r in range(data_start, clear_to + 1):
+        original_last = last_nonempty_row(ws)
+        for r in range(data_start, data_start + len(rows)):
             copy_row_format(ws, data_start, r, max_col)
             for c in range(1, max_col + 1):
                 ws.cell(r, c).value = None
+        delete_start = data_start + len(rows)
+        if original_last >= delete_start:
+            ws.delete_rows(delete_start, original_last - delete_start + 1)
         cols = table.columns
         for cell in ("G2", "I2", "J2", "K2", "L2"):
             if ws[cell].value is not None:
                 ws[cell].value = workbook_date
         for offset, item in enumerate(rows):
             r = data_start + offset
+            inventory_ref = f"{get_column_letter(cols['inventory'])}{r}" if cols.get("inventory") else f"G{r}"
+            inbound_ref = f"{get_column_letter(cols['inbound'])}{r}" if cols.get("inbound") else f"I{r}"
+            outbound_ref = f"{get_column_letter(cols['outbound'])}{r}" if cols.get("outbound") else f"J{r}"
             values = {
                 "sequence": item["sequence"],
                 "category": item["category"],
+                "code": item["code"],
                 "product": item["product"],
                 "spec": item["spec"],
                 "unit": item["unit"],
@@ -382,7 +390,7 @@ def generate_production_workbook(
                 "safety": display_number(item["safety"]),
                 "inbound": None,
                 "outbound": display_number(item["outbound"]),
-                "theory_stock": f"=G{r}+I{r}-J{r}" if cols.get("theory_stock") else None,
+                "theory_stock": f"={inventory_ref}+{inbound_ref}-{outbound_ref}" if cols.get("theory_stock") else None,
                 "production": f"={get_column_letter(cols['safety'])}{r}" if cols.get("safety") else None,
             }
             for key, value in values.items():
