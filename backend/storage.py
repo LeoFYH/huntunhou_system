@@ -19,34 +19,31 @@ SEEDED_DIR = STORAGE_DIR / "seeded_files"
 
 
 MULTI_FILE_SLOTS = {
-    "module1_orders",
-    "module3_photos",
-    "module4_orders",
     "recipe_table",
 }
 
 RESIDENT_SLOTS = {
-    "safety_stock",
     "production_template",
     "recipe_table",
     "conversion_table",
+    "stock_owner_table",
     "material_template",
     "receipt_template",
+    "shipment_template",
 }
 
 MODULE_SLOTS = {
-    "1": ["module1_orders", "module1_extra_text"],
-    "2": ["module2_production", "module2_stock_text"],
-    "3": ["module3_photos", "module3_manual_items"],
-    "4": ["module4_orders", "module4_ship_text"],
+    "1": [],
+    "2": [],
+    "3": [],
+    "4": [],
 }
 
 SEED_FILES = {
     "production_template": "production_template.xlsx",
     "material_template": "material_issue_template.xlsx",
     "receipt_template": "finished_goods_receipt_template.xlsx",
-    "module1_orders": "order_template.xlsx",
-    "module4_orders": "order_template.xlsx",
+    "shipment_template": "order_template.xlsx",
 }
 
 

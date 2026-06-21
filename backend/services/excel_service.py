@@ -112,6 +112,7 @@ def detect_table(ws, purpose: str = "generic") -> TableMap | None:
             "outbound": ["出库数量", "出库数", "订货数量"],
             "theory_stock": ["理论库存数", "理论库存"],
             "production": ["理论排产", "排产量", "产量"],
+            "warehouse": ["所属库", "库位", "仓库", "库别"],
         }
         for key, keywords in pairs.items():
             col = _find_col(headers, keywords)
@@ -289,7 +290,6 @@ def write_basic_headers(ws, title: str, headers: list[str]) -> None:
 
 def generate_production_workbook(
     order_paths: list[Path],
-    safety_path: Path | None,
     production_template_path: Path | None,
     confirmed_items: list[dict[str, Any]] | None,
     order_date: date | None,
@@ -299,12 +299,7 @@ def generate_production_workbook(
     warnings: list[str] = []
     orders = aggregate_orders(order_paths, confirmed_items)
 
-    template_safety = safety_stock_map(production_template_path)
-    safety = safety_stock_map(safety_path) or template_safety
-    if not safety:
-        warnings.append("未上传安全库存表，也未能从排产模板读取安全库存数。")
-
-    catalog_paths = [p for p in [production_template_path, safety_path, *order_paths] if p]
+    catalog_paths = [p for p in [production_template_path, *order_paths] if p]
     catalog = product_catalog(catalog_paths)
     for key, order in orders.items():
         catalog.setdefault(
@@ -324,9 +319,6 @@ def generate_production_workbook(
     for idx, key in enumerate(keys, 1):
         meta = catalog[key]
         order_qty = orders.get(key, {}).get("quantity", 0.0)
-        safety_qty = safety.get(key)
-        if key in orders and safety_qty is None:
-            warnings.append(f"{meta['product']} 没有安全库存数，排产量留空。")
         rows.append(
             {
                 "sequence": idx,
@@ -336,11 +328,11 @@ def generate_production_workbook(
                 "unit": meta.get("unit", ""),
                 "price": meta.get("price"),
                 "inventory": None,
-                "safety": safety_qty,
+                "safety": None,
                 "inbound": None,
                 "outbound": order_qty,
                 "theory_stock_formula": None,
-                "production": safety_qty,
+                "production": None,
             }
         )
 
@@ -391,7 +383,7 @@ def generate_production_workbook(
                 "inbound": None,
                 "outbound": display_number(item["outbound"]),
                 "theory_stock": f"=G{r}+I{r}-J{r}" if cols.get("theory_stock") else None,
-                "production": display_number(item["production"]),
+                "production": f"={get_column_letter(cols['safety'])}{r}" if cols.get("safety") else None,
             }
             for key, value in values.items():
                 col = cols.get(key)
@@ -402,7 +394,7 @@ def generate_production_workbook(
         ws = wb.active
         headers = ["序号", "类别", "商品名称", "商品规格", "单位", "单价（元）", "盘点库存数", "安全库存数", "入库数", "出库数量", "理论库存数", "排产量"]
         write_basic_headers(ws, "排产单", headers)
-        for item in rows:
+        for row_index, item in enumerate(rows, start=3):
             ws.append(
                 [
                     item["sequence"],
@@ -416,7 +408,7 @@ def generate_production_workbook(
                     None,
                     display_number(item["outbound"]),
                     None,
-                    display_number(item["production"]),
+                    f"=H{row_index}",
                 ]
             )
     output = output_dir / f"排产表_{workbook_date.isoformat()}.xlsx"
@@ -442,8 +434,20 @@ def _best_order_sheet(path: Path):
     return wb, best_ws, best_table
 
 
+def update_store_header(ws, store: str) -> None:
+    title = f"{store}发货单"
+    for row in range(1, min(6, ws.max_row) + 1):
+        for col in range(1, ws.max_column + 1):
+            value = ws.cell(row, col).value
+            if isinstance(value, str) and any(token in value for token in ("馄饨侯", "发货", "出库", "店")):
+                ws.cell(row, col).value = title
+                return
+    ws["A1"].value = title
+
+
 def generate_shipment_outputs(
     order_paths: list[Path],
+    template_path: Path | None,
     confirmed_items: list[dict[str, Any]] | None,
     order_date: date | None,
     output_dir: Path,
@@ -474,7 +478,7 @@ def generate_shipment_outputs(
 
     generated: list[Path] = []
     output_date = (order_date or date.today()).isoformat()
-    first_template = order_paths[0] if order_paths else None
+    first_template = template_path or (order_paths[0] if order_paths else None)
     for store, products in store_products.items():
         template = store_template.get(store) or first_template
         if not template:
@@ -492,6 +496,7 @@ def generate_shipment_outputs(
                 if other is not ws:
                     wb.remove(other)
             ws.title = store[:31]
+            update_store_header(ws, store)
             qty_col = table.columns.get("order_qty")
             product_col = table.columns["product"]
             if qty_col:
@@ -733,12 +738,33 @@ def parse_conversion_table(path: Path | None) -> dict[str, float]:
     return conversions
 
 
+def parse_stock_owner_table(path: Path | None) -> dict[str, str]:
+    if not path:
+        return {}
+    owners: dict[str, str] = {}
+    wb = load_workbook(path, data_only=True)
+    for ws in wb.worksheets:
+        table = detect_table(ws, "generic")
+        if not table or "warehouse" not in table.columns:
+            continue
+        product_col = table.columns["product"]
+        warehouse_col = table.columns["warehouse"]
+        for row_idx in range(table.data_start, last_nonempty_row(ws) + 1):
+            name = normalize_text(ws.cell(row_idx, product_col).value)
+            warehouse = normalize_text(ws.cell(row_idx, warehouse_col).value)
+            if name and warehouse:
+                owners[normalize_key(name)] = warehouse
+    return owners
+
+
 def generate_material_issue_workbook(
     production_path: Path | None,
     recipe_paths: list[Path],
     conversion_path: Path | None,
+    stock_owner_path: Path | None,
     material_template_path: Path | None,
     workshop_stock_text: str,
+    document_date: date | None,
     output_dir: Path,
 ) -> tuple[Path | None, list[str], list[str]]:
     missing = []
@@ -748,6 +774,8 @@ def generate_material_issue_workbook(
         missing.append("原材料配方表/投料单")
     if not conversion_path:
         missing.append("单位换算表")
+    if not stock_owner_path:
+        missing.append("所属库表")
     if missing:
         return None, missing, []
 
@@ -755,6 +783,7 @@ def generate_material_issue_workbook(
     production_rows = parse_rows(production_path, "production")
     recipes = parse_recipe_tables(recipe_paths)
     conversions = parse_conversion_table(conversion_path)
+    stock_owners = parse_stock_owner_table(stock_owner_path)
     workshop_stock = parse_workshop_stock(workshop_stock_text)
 
     recipe_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -797,20 +826,26 @@ def generate_material_issue_workbook(
                     "raw": recipe["raw"],
                     "spec": recipe.get("spec", ""),
                     "unit": recipe.get("unit", ""),
+                    "warehouse": stock_owners.get(raw_key, ""),
                     "qty": 0.0,
                 },
             )
+            if not current_item["warehouse"]:
+                warnings.append(f"{recipe['raw']} 没有在所属库表中找到所属库。")
             current_item["qty"] += issue_qty
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    today = date.today().isoformat()
+    today = (document_date or date.today()).isoformat()
     if material_template_path:
         wb = load_workbook(material_template_path)
         ws = wb.worksheets[0]
         table = detect_table(ws, "material")
         data_start = table.data_start if table else 2
         cols = table.columns if table else {"code": 1, "product": 2, "spec": 3, "unit": 4, "qty": 5}
-        max_col = max(ws.max_column, 14)
+        if "warehouse" not in cols:
+            cols["warehouse"] = max(ws.max_column, max(cols.values(), default=0)) + 1
+            ws.cell((table.header_row if table else 1), cols["warehouse"]).value = "所属库"
+        max_col = max(ws.max_column, cols["warehouse"], 14)
         for r in range(data_start, max(last_nonempty_row(ws), data_start + len(material_qty) + 5) + 1):
             copy_row_format(ws, data_start, r, max_col)
             for c in range(1, max_col + 1):
@@ -823,6 +858,7 @@ def generate_material_issue_workbook(
                 "spec": item["spec"],
                 "unit": item["unit"],
                 "qty": display_number(item["qty"]),
+                "warehouse": item["warehouse"],
             }.items():
                 col = cols.get(key)
                 if col:
@@ -830,9 +866,9 @@ def generate_material_issue_workbook(
     else:
         wb = Workbook()
         ws = wb.active
-        write_basic_headers(ws, "材料出库单", ["存货编码", "存货名称", "规格型号", "主计量", "数量"])
+        write_basic_headers(ws, "材料出库单", ["存货编码", "存货名称", "规格型号", "主计量", "数量", "所属库"])
         for item in material_qty.values():
-            ws.append([item["code"], item["raw"], item["spec"], item["unit"], display_number(item["qty"])])
+            ws.append([item["code"], item["raw"], item["spec"], item["unit"], display_number(item["qty"]), item["warehouse"]])
 
     output = output_dir / f"材料出库单_{today}.xlsx"
     wb.save(output)
@@ -842,11 +878,12 @@ def generate_material_issue_workbook(
 def generate_receipt_workbook(
     receipt_template_path: Path | None,
     items: list[dict[str, Any]],
+    document_date: date | None,
     output_dir: Path,
 ) -> tuple[Path, list[str]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
-    today = date.today().isoformat()
+    today = (document_date or date.today()).isoformat()
     clean_items = []
     for item in items:
         name = str(item.get("product") or item.get("name") or "").strip()

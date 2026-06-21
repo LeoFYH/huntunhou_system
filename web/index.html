@@ -8,198 +8,172 @@
   </head>
   <body>
     <main class="wrap">
-      <header class="topbar">
+      <header>
         <div class="brand">
-          <div class="mark">馄</div>
+          <div class="bowl">馄</div>
           <div>
             <h1>馄饨侯订单工具</h1>
-            <p>订单、排产、领料、入库、发货</p>
+            <p class="sub">同步 -> 确认 -> 生成 Excel。模板存一次长期用，分开放在各模块里。</p>
           </div>
         </div>
-        <button class="ghost" id="refreshState">刷新状态</button>
+        <div class="top-actions">
+          <span id="apiState">读取中</span>
+          <button class="ghost" id="refreshState">刷新</button>
+        </div>
       </header>
 
-      <section class="resident">
-        <div class="resident-head">
-          <h2>常驻表</h2>
-          <span id="apiState">读取中</span>
-        </div>
-        <div class="resident-grid">
-          <div class="field">
-            <div class="field-title">安全库存表</div>
-            <label class="drop"><input type="file" data-slot="safety_stock" accept=".xlsx,.xls" />上传或替换</label>
-            <div class="files" data-files="safety_stock"></div>
-          </div>
-          <div class="field">
-            <div class="field-title">排产单模板</div>
-            <label class="drop"><input type="file" data-slot="production_template" accept=".xlsx,.xls" />上传或替换</label>
-            <div class="files" data-files="production_template"></div>
-          </div>
-          <div class="field">
-            <div class="field-title">材料出库单模板</div>
-            <label class="drop"><input type="file" data-slot="material_template" accept=".xlsx,.xls" />上传或替换</label>
-            <div class="files" data-files="material_template"></div>
-          </div>
-          <div class="field">
-            <div class="field-title">产成品入库单模板</div>
-            <label class="drop"><input type="file" data-slot="receipt_template" accept=".xlsx,.xls" />上传或替换</label>
-            <div class="files" data-files="receipt_template"></div>
-          </div>
-          <div class="field">
-            <div class="field-title">原材料配方表 / 投料单</div>
-            <label class="drop"><input type="file" multiple data-slot="recipe_table" accept=".xlsx,.xls" />上传投料单，可多选</label>
-            <div class="files" data-files="recipe_table"></div>
-            <div class="recipe-preview" id="recipePreview"></div>
-          </div>
-          <div class="field">
-            <div class="field-title">单位换算表</div>
-            <label class="drop"><input type="file" data-slot="conversion_table" accept=".xlsx,.xls" />上传或替换</label>
-            <div class="files" data-files="conversion_table"></div>
-          </div>
-        </div>
-      </section>
+      <div class="rule"></div>
 
       <section class="module" id="module1">
-        <div class="module-head">
-          <div class="num">1</div>
+        <div class="m-head">
+          <div class="m-num">1</div>
           <div>
-            <h2>订单汇总 → 排产表</h2>
-            <p>按下单日期生成排产表</p>
+            <div class="m-title">订单 -> 排产表</div>
+            <div class="m-flow">出下单日期这一批</div>
           </div>
-          <button class="ghost" data-reset-module="1">清空本模块</button>
+          <label class="m-date">日期 <input type="date" id="dateModule1" data-date /></label>
         </div>
-        <div class="module-body">
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">多门店订单 Excel</div>
-              <button class="link" data-reset-slot="module1_orders">重置</button>
+        <div class="m-body">
+          <div class="tpl-zone">
+            <div class="tpl-zone-head">排产单模板（存一次长期用）</div>
+            <div class="tpl" data-template="production_template">
+              <span class="dot"></span>
+              <span class="t-name">排产单模板</span>
+              <span class="t-meta" data-files="production_template"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="production_template" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="production_template">重置</button>
             </div>
-            <label class="drop"><input type="file" multiple data-slot="module1_orders" accept=".xlsx,.xls" />选择订单</label>
-            <div class="files" data-files="module1_orders"></div>
           </div>
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">订单库</div>
-            </div>
-            <div class="actions inline-actions">
-              <button class="secondary" id="fetchRobotOrders">从订单库同步</button>
-            </div>
-            <div class="robot-preview" id="robotFetchResult"></div>
+
+          <div class="block">
+            <p class="block-label">从订单库同步</p>
+            <button class="sync" id="syncOrders">同步订单库 <span class="ai-tag">AI</span></button>
+            <div class="ai-confirm hidden" id="orderSyncResult"></div>
           </div>
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">群里文字加单</div>
-              <button class="link" data-reset-slot="module1_extra_text">重置</button>
-            </div>
-            <textarea data-text-slot="module1_extra_text" placeholder="海天黄豆酱2箱，鸡汤鲜肉馄饨再加3箱"></textarea>
-            <div class="actions">
-              <button class="secondary" id="parseOrder">AI 识别</button>
-              <button class="primary" id="generateProduction">生成排产表</button>
-            </div>
-            <div class="confirm hidden" id="orderConfirm"></div>
-          </div>
+
+          <button class="gen" id="generateProduction">生成排产表</button>
+          <p class="out-hint">导出 <b>排产表_日期.xlsx</b>，盘点库存和安全库存留给用户手填，排产量等于安全库存。</p>
           <div class="result" id="productionResult"></div>
         </div>
       </section>
 
       <section class="module" id="module2">
-        <div class="module-head">
-          <div class="num">2</div>
+        <div class="m-head">
+          <div class="m-num">2</div>
           <div>
-            <h2>排产表 → 材料出库单</h2>
-            <p>理论库存低于安全库存 50% 才触发领料</p>
+            <div class="m-title">排产表 -> 领料单</div>
+            <div class="m-flow">50% 触发，向上取整</div>
           </div>
-          <button class="ghost" data-reset-module="2">清空本模块</button>
+          <label class="m-date">日期 <input type="date" id="dateModule2" data-date /></label>
         </div>
-        <div class="module-body">
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">已填好的排产表</div>
-              <button class="link" data-reset-slot="module2_production">重置</button>
+        <div class="m-body">
+          <div class="tpl-zone">
+            <div class="tpl-zone-head">本模块模板（存一次长期用）</div>
+            <div class="tpl" data-template="recipe_table">
+              <span class="dot"></span>
+              <span class="t-name">投料配方表</span>
+              <span class="t-meta" data-files="recipe_table"></span>
+              <label class="t-reset">换新的<input type="file" multiple data-slot="recipe_table" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="recipe_table">重置</button>
             </div>
-            <label class="drop"><input type="file" data-slot="module2_production" accept=".xlsx,.xls" />选择排产表</label>
-            <div class="files" data-files="module2_production"></div>
-          </div>
-          <div class="notice">
-            触发规则：理论库存数 = 盘点库存数 + 入库数 - 出库数；理论库存数低于安全库存数的 50% 时，才进入材料出库单。
-          </div>
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">车间现有原料数量</div>
-              <button class="link" data-reset-slot="module2_stock_text">重置</button>
+            <div class="recipe-preview" id="recipePreview"></div>
+            <div class="tpl" data-template="conversion_table">
+              <span class="dot"></span>
+              <span class="t-name">单位转换表</span>
+              <span class="t-meta" data-files="conversion_table"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="conversion_table" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="conversion_table">重置</button>
             </div>
-            <textarea data-text-slot="module2_stock_text" placeholder="猪肉馅 20斤，面皮 500张"></textarea>
-            <div class="actions">
-              <button class="primary" id="generateMaterial">生成材料出库单</button>
+            <div class="tpl" data-template="stock_owner_table">
+              <span class="dot"></span>
+              <span class="t-name">所属库表</span>
+              <span class="t-meta" data-files="stock_owner_table"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="stock_owner_table" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="stock_owner_table">重置</button>
             </div>
+            <p class="tpl-note">所属库表只用于给原料补“所属库”：成品、冷冻、冷藏、主食等。</p>
           </div>
+
+          <div class="block">
+            <p class="block-label">每次都要传（不长期保存）</p>
+            <label class="drop">
+              <span>上传填好的完整排产表</span>
+              <input type="file" id="productionRunFile" accept=".xlsx,.xls" />
+            </label>
+            <div class="filechip hidden" id="productionRunFileName"></div>
+          </div>
+
+          <button class="gen" id="generateMaterial">生成领料单</button>
+          <p class="out-hint">导出 <b>领料单.xlsx</b>，新增 <b>所属库</b> 列。</p>
           <div class="result" id="materialResult"></div>
         </div>
       </section>
 
       <section class="module" id="module3">
-        <div class="module-head">
-          <div class="num">3</div>
+        <div class="m-head">
+          <div class="m-num">3</div>
           <div>
-            <h2>产成品入库单</h2>
-            <p>拍照接口预留，当前可手动确认</p>
+            <div class="m-title">入库单</div>
+            <div class="m-flow">产成品库存数据</div>
           </div>
-          <button class="ghost" data-reset-module="3">清空本模块</button>
+          <label class="m-date">日期 <input type="date" id="dateModule3" data-date /></label>
         </div>
-        <div class="module-body">
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">车间产量照片</div>
-              <button class="link" data-reset-slot="module3_photos">重置</button>
-            </div>
-            <label class="drop"><input type="file" multiple data-slot="module3_photos" accept="image/*" />选择照片</label>
-            <div class="files" data-files="module3_photos"></div>
-          </div>
-          <div class="field">
-            <div class="field-title">入库确认行</div>
-            <div class="mini-table" id="receiptRows"></div>
-            <div class="actions">
-              <button class="secondary" id="addReceiptRow">添加一行</button>
-              <button class="primary" id="generateReceipt">生成入库单</button>
+        <div class="m-body">
+          <div class="tpl-zone">
+            <div class="tpl-zone-head">入库单模板（存一次长期用）</div>
+            <div class="tpl" data-template="receipt_template">
+              <span class="dot"></span>
+              <span class="t-name">产成品入库单模板</span>
+              <span class="t-meta" data-files="receipt_template"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="receipt_template" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="receipt_template">重置</button>
             </div>
           </div>
+
+          <div class="block">
+            <p class="block-label">从产成品库存同步</p>
+            <button class="sync" id="syncReceipts">同步入库数据 <span class="ai-tag">AI</span></button>
+            <div class="ai-confirm hidden" id="receiptSyncResult"></div>
+          </div>
+
+          <button class="gen" id="generateReceipt">生成入库单（批量）</button>
           <div class="result" id="receiptResult"></div>
         </div>
       </section>
 
       <section class="module" id="module4">
-        <div class="module-head">
-          <div class="num">4</div>
+        <div class="m-head">
+          <div class="m-num">4</div>
           <div>
-            <h2>发货单</h2>
-            <p>按门店导出</p>
+            <div class="m-title">发货单</div>
+            <div class="m-flow">按门店各出一张</div>
           </div>
-          <button class="ghost" data-reset-module="4">清空本模块</button>
+          <label class="m-date">日期 <input type="date" id="dateModule4" data-date /></label>
         </div>
-        <div class="module-body">
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">原始订单 Excel</div>
-              <button class="link" data-reset-slot="module4_orders">重置</button>
+        <div class="m-body">
+          <div class="tpl-zone">
+            <div class="tpl-zone-head">发货单/出库单模板（存一次长期用）</div>
+            <div class="tpl" data-template="shipment_template">
+              <span class="dot"></span>
+              <span class="t-name">发货单/出库单模板</span>
+              <span class="t-meta" data-files="shipment_template"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="shipment_template" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="shipment_template">重置</button>
             </div>
-            <label class="drop"><input type="file" multiple data-slot="module4_orders" accept=".xlsx,.xls" />选择订单</label>
-            <div class="files" data-files="module4_orders"></div>
           </div>
-          <div class="field">
-            <div class="field-row">
-              <div class="field-title">群里文字发货</div>
-              <button class="link" data-reset-slot="module4_ship_text">重置</button>
-            </div>
-            <textarea data-text-slot="module4_ship_text" placeholder="鼓楼店再发馄饨5箱，振兴学校加发豆浆10箱"></textarea>
-            <div class="actions">
-              <button class="secondary" id="parseShipment">AI 识别</button>
-              <button class="primary" id="generateShipment">生成发货单</button>
-            </div>
-            <div class="confirm hidden" id="shipmentConfirm"></div>
+
+          <div class="block">
+            <p class="block-label">从订单库同步（发货=订单）</p>
+            <button class="sync" id="syncShipment">同步订单库 <span class="ai-tag">AI</span></button>
+            <div class="ai-confirm hidden" id="shipmentSyncResult"></div>
           </div>
+
+          <button class="gen" id="generateShipment">生成发货单（批量）</button>
           <div class="result" id="shipmentResult"></div>
         </div>
       </section>
+
+      <p class="note">模板不点“换新的/重置”就一直保存。订单、入库、发货都从机器人同步，确认后再生成。</p>
     </main>
     <script src="/assets/app.js"></script>
   </body>

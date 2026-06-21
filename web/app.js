@@ -2,12 +2,9 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 let appState = {};
-let confirmedOrderItems = [];
-let confirmedShipmentItems = [];
-let robotFetchedBatches = [];
-let acceptedRobotItems = [];
-let acceptedRobotOrderIds = [];
-let acceptedRobotOrderDate = "";
+let productionBatch = { items: [], ids: [], orderDate: "" };
+let receiptItems = [];
+let shipmentBatch = { items: [], orderDate: "" };
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -15,9 +12,7 @@ async function request(path, options = {}) {
     ...options,
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.detail || "请求失败");
-  }
+  if (!response.ok) throw new Error(data.detail || "请求失败");
   return data;
 }
 
@@ -29,17 +24,37 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function formatTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+function todayIso() {
+  const date = new Date();
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function filesFor(slot) {
   const files = appState.files?.[slot];
   if (!files) return [];
   return Array.isArray(files) ? files : [files];
+}
+
+function formatTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+}
+
+function renderTemplateFiles() {
+  $$("[data-files]").forEach((node) => {
+    const slot = node.dataset.files;
+    const files = filesFor(slot);
+    if (!files.length) {
+      node.textContent = "未上传";
+      return;
+    }
+    node.textContent = files
+      .map((file) => `${file.seeded ? "已载入" : "已保存"} · ${file.name}${formatTime(file.uploaded_at) ? ` · ${formatTime(file.uploaded_at)}` : ""}`)
+      .join("；");
+  });
 }
 
 function storedRobotFailureIds() {
@@ -59,47 +74,24 @@ function storedRobotFailureIds() {
 
 function renderStoredRobotFailures() {
   const target = $("#productionResult");
-  if (!target) return;
   const ids = storedRobotFailureIds();
-  if (!ids.length) {
-    if (target.dataset.persistedFailureNotice === "true") target.innerHTML = "";
-    target.dataset.persistedFailureNotice = "";
+  if (!target || !ids.length || target.innerHTML.trim()) return;
+  target.innerHTML = `<div class="notice">订单库有历史失败 id：${ids.map(escapeHtml).join("、")}。<button class="mini" data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(ids))}">重试标记</button></div>`;
+}
+
+async function refreshRecipePreview() {
+  const target = $("#recipePreview");
+  if (!target) return;
+  const preview = await request("/api/recipe-preview");
+  if (!preview.file_count) {
+    target.textContent = "";
     return;
   }
-  if (target.innerHTML.trim() && target.dataset.persistedFailureNotice !== "true") return;
-  target.dataset.persistedFailureNotice = "true";
-  target.innerHTML = `<div class="notice">订单库有历史失败 id：${ids.map(escapeHtml).join("、")}。<button data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(ids))}">重试标记</button></div>`;
-}
-
-function renderFiles() {
-  $$("[data-files]").forEach((node) => {
-    const slot = node.dataset.files;
-    const files = filesFor(slot);
-    node.innerHTML = "";
-    if (!files.length) {
-      node.innerHTML = `<span class="chip">未保存</span>`;
-      return;
-    }
-    files.forEach((file) => {
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.innerHTML = `<span>${file.seeded ? "已载入" : "已保存"} · ${escapeHtml(file.name)} · ${formatTime(file.uploaded_at)}</span>`;
-      node.appendChild(chip);
-    });
-  });
-}
-
-function renderText() {
-  $$("[data-text-slot]").forEach((textarea) => {
-    const slot = textarea.dataset.textSlot;
-    const value = appState.text?.[slot]?.value || "";
-    if (document.activeElement !== textarea) textarea.value = value;
-  });
+  target.textContent = `已识别 ${preview.file_count} 个文件、${preview.product_count} 个成品、${preview.recipe_rows} 条配料`;
 }
 
 function renderState() {
-  renderFiles();
-  renderText();
+  renderTemplateFiles();
   renderStoredRobotFailures();
   $("#apiState").textContent = "已连接";
   refreshRecipePreview().catch(() => {});
@@ -110,28 +102,6 @@ async function loadState() {
   renderState();
 }
 
-async function refreshRecipePreview() {
-  const target = $("#recipePreview");
-  if (!target) return;
-  const preview = await request("/api/recipe-preview");
-  if (!preview.file_count) {
-    target.innerHTML = "";
-    return;
-  }
-  const productNames = preview.products
-    .slice(0, 8)
-    .map((item) => escapeHtml(item.name))
-    .join("、");
-  const unrecognized = preview.files.flatMap((file) =>
-    (file.unrecognized_sheets || []).map((sheet) => `${file.name}/${sheet}`),
-  );
-  target.innerHTML = `
-    <div>已识别 <strong>${preview.file_count}</strong> 个文件、<strong>${preview.product_count}</strong> 个成品、<strong>${preview.recipe_rows}</strong> 条配料。</div>
-    ${productNames ? `<div>示例成品：${productNames}</div>` : ""}
-    ${unrecognized.length ? `<div class="notice">未识别 sheet：${unrecognized.slice(0, 6).map(escapeHtml).join("、")}</div>` : ""}
-  `;
-}
-
 async function uploadFiles(slot, files) {
   const form = new FormData();
   [...files].forEach((file) => form.append("files", file));
@@ -140,76 +110,81 @@ async function uploadFiles(slot, files) {
   renderState();
 }
 
-function debounce(fn, wait = 400) {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), wait);
-  };
-}
-
-const saveText = debounce(async (slot, value) => {
-  const data = await request(`/api/text/${slot}`, {
-    method: "POST",
-    body: JSON.stringify({ value }),
-  });
-  appState = data.state;
-}, 500);
-
-function input(name, value = "", placeholder = "") {
-  return `<input data-name="${name}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" />`;
-}
-
-function renderConfirm(container, items, includeStore) {
-  container.classList.remove("hidden");
-  const rows = items.length ? items : [{ store: "", product: "", quantity: "", unit: "", type: "新增" }];
-  container.innerHTML = `
-    <div class="confirm-title">识别结果</div>
-    <div class="confirm-rows">
-      ${rows
-        .map(
-          (item) => `
-          <div class="confirm-grid ${includeStore ? "" : "no-store"}">
-            ${includeStore ? input("store", item.store || "", "门店") : ""}
-            ${input("product", item.product || "", "商品")}
-            ${input("quantity", item.quantity ?? "", "数量")}
-            ${input("unit", item.unit || "", "单位")}
-            ${input("type", item.type || "新增", "类型")}
-            <button class="icon-btn" data-remove-row title="删除">×</button>
-          </div>
-        `,
-        )
-        .join("")}
-    </div>
-    <div class="actions">
-      <button class="secondary" data-add-confirm-row>添加一行</button>
-      <button class="primary" data-accept-confirm>确认并入</button>
-    </div>
-  `;
-}
-
-function collectConfirm(container, includeStore) {
-  return $$(".confirm-grid", container)
-    .map((row) => {
-      const item = {};
-      $$("input", row).forEach((node) => {
-        item[node.dataset.name] = node.value.trim();
-      });
-      item.quantity = Number(item.quantity || 0);
-      if (!includeStore) delete item.store;
-      return item;
+function storeRows(groups) {
+  if (!groups?.length) return `<div class="store-row"><span class="store-items">没有可确认的数据</span></div>`;
+  return groups
+    .map((group) => {
+      const items = (group.items || [])
+        .map((item) => `${item.name} ${item.quantity}${item.unit || ""}`)
+        .join(" · ");
+      return `<div class="store-row"><span class="store-name">${escapeHtml(group.store)}</span> <span class="store-items">· ${escapeHtml(items)}</span></div>`;
     })
-    .filter((item) => item.product && item.quantity);
+    .join("");
+}
+
+function renderRejected(rejectedPatches) {
+  if (!rejectedPatches?.length) return "";
+  const rows = rejectedPatches
+    .map((patch) => {
+      const content = (patch.items || []).map((item) => item.label || `${item.name} ${item.qty || ""}${item.unit || ""}`).join("、");
+      const dateLabel = patch.order_date ? `${patch.order_date} · ` : "";
+      return `<li>${escapeHtml(dateLabel)}${escapeHtml(patch.store)}：${escapeHtml(content || "未填写商品")}</li>`;
+    })
+    .join("");
+  return `<div class="notice">以下加货找不到同下单日期、同门店主订单，请先处理：<ul>${rows}</ul></div>`;
+}
+
+function renderOrderBatches(target, data, mode) {
+  const batches = data.batches || [];
+  let html = "";
+  (data.warnings || []).forEach((warning) => {
+    html += `<div class="notice">${escapeHtml(warning)}</div>`;
+  });
+  html += renderRejected(data.rejected_patches || []);
+  if (!batches.length) {
+    target.classList.remove("hidden");
+    target.innerHTML = `${html}<div class="notice">没有可确认的数据。</div>`;
+    return;
+  }
+  if (batches.length > 1) {
+    html += `<div class="notice">本次包含 ${batches.length} 个下单日期，已拆成多个批次，请选一个。</div>`;
+  }
+  html += batches
+    .map((batch, index) => {
+      const counts = batch.counts || {};
+      return `
+        <div class="ct">下单日期 ${escapeHtml(batch.order_date || "未填写")} · ${counts.orders || 0} 单 · ${counts.stores || 0} 门店 · ${counts.items || 0} 行</div>
+        ${storeRows(batch.grouped || [])}
+        <div class="confirm-btns">
+          <button class="mini ok" data-accept-order-batch="${mode}" data-batch-index="${index}" ${batch.order_date ? "" : "disabled"}>确认此批</button>
+        </div>
+      `;
+    })
+    .join("");
+  target.dataset.payload = JSON.stringify(batches);
+  target.classList.remove("hidden");
+  target.innerHTML = html;
+}
+
+function renderReceiptSync(data) {
+  const target = $("#receiptSyncResult");
+  let html = "";
+  (data.warnings || []).forEach((warning) => {
+    html += `<div class="notice">${escapeHtml(warning)}</div>`;
+  });
+  html += `<div class="ct">入库数据 · ${data.counts?.stores || 0} 门店 · ${data.counts?.items || 0} 行</div>`;
+  html += storeRows(data.grouped || []);
+  html += `<div class="confirm-btns"><button class="mini ok" id="acceptReceiptSync">确认入库数据</button></div>`;
+  target.dataset.payload = JSON.stringify(data.items || []);
+  target.classList.remove("hidden");
+  target.innerHTML = html;
 }
 
 function renderDownload(target, data) {
-  target.dataset.persistedFailureNotice = "";
   const warnings = data.warnings || [];
   const missing = data.missing || [];
   let html = "";
-  if (missing.length) {
-    html += `<div class="notice">缺少：${missing.map(escapeHtml).join("、")}</div>`;
-  }
+  if (missing.length) html += `<div class="notice">缺少：${missing.map(escapeHtml).join("、")}</div>`;
   warnings.forEach((warning) => {
     html += `<div class="notice">${escapeHtml(warning)}</div>`;
   });
@@ -219,262 +194,122 @@ function renderDownload(target, data) {
   if (data.robot_mark && data.robot_mark.ok !== false && !data.robot_mark.skipped) {
     html += `<div class="download"><span>订单库已标记为已拉取</span></div>`;
   }
-  if (data.robot_mark && data.robot_mark.failed && data.robot_mark.failed.length) {
+  if (data.robot_mark?.failed?.length) {
     const failedIds = data.robot_mark.failed;
-    html += `<div class="notice">订单库部分 id 标记失败：${failedIds.map(escapeHtml).join("、")}。失败 id 已本地记录。<button data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(failedIds))}">重试标记</button></div>`;
+    html += `<div class="notice">订单库部分 id 标记失败：${failedIds.map(escapeHtml).join("、")}。<button class="mini" data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(failedIds))}">重试标记</button></div>`;
   }
   target.innerHTML = html;
 }
 
-function renderRobotFetch(data) {
-  const target = $("#robotFetchResult");
-  robotFetchedBatches = data.batches || [];
-  acceptedRobotItems = [];
-  acceptedRobotOrderIds = [];
-  acceptedRobotOrderDate = "";
-
-  const warnings = data.warnings || [];
-  const rejectedPatches = data.rejected_patches || [];
-  const counts = data.counts || {};
-  const orderDates = data.order_dates || [];
-  let html = "";
-
-  warnings.forEach((warning) => {
-    html += `<div class="notice">${escapeHtml(warning)}</div>`;
-  });
-  if (orderDates.length > 1) {
-    html += `<div class="notice">本次包含 ${orderDates.length} 个下单日期，已按下单日期拆成多个批次，请选择其中一个批次生成排产表。</div>`;
-  }
-  if (rejectedPatches.length) {
-    const rejectedRows = rejectedPatches
-      .map((patch) => {
-        const content = (patch.items || [])
-          .map((item) => item.label || `${item.name} ${item.qty || ""}${item.unit || ""}`)
-          .join("、");
-        const dateLabel = patch.order_date ? `${patch.order_date} · ` : "";
-        return `<li>${escapeHtml(dateLabel)}${escapeHtml(patch.store)}：${escapeHtml(content || "未填写商品")}</li>`;
-      })
-      .join("");
-    html += `<div class="notice">以下加货找不到对应门店的主订单，请先上传这些门店的主订单：<ul>${rejectedRows}</ul></div>`;
-  }
-
-  if (!robotFetchedBatches.length) {
-    target.innerHTML = `${html}<div class="notice">订单库没有可并入的待处理订单。</div>`;
-    return;
-  }
-
-  const batchPanels = robotFetchedBatches
-    .map((batch, index) => {
-      const batchGroups = (batch.grouped || [])
-        .map((group) => {
-          const items = (group.items || [])
-            .slice(0, 18)
-            .map((item) => `<li>${escapeHtml(item.name)} × ${escapeHtml(item.quantity)}${escapeHtml(item.unit || "")}</li>`)
-            .join("");
-          const more = (group.items || []).length > 18 ? `<li>还有 ${(group.items || []).length - 18} 条...</li>` : "";
-          return `
-            <div class="robot-store">
-              <div class="robot-store-title">
-                <span>${escapeHtml(group.store)}</span>
-                <span>${(group.orders || []).length} 单 · ${(group.items || []).length} 个品</span>
-              </div>
-              <ul>${items}${more}</ul>
-            </div>
-          `;
-        })
-        .join("");
-      const batchCounts = batch.counts || {};
-      const orderDate = batch.order_date || "";
-      const canAccept = Boolean(orderDate);
-      return `
-        <div class="robot-panel">
-          <div class="robot-panel-head">
-            <span>下单日期 ${escapeHtml(orderDate || "未填写")}</span>
-            <span>${batchCounts.orders || 0} 单 · ${batchCounts.stores || 0} 门店 · ${batchCounts.items || 0} 行</span>
-          </div>
-          ${batchGroups}
-          <div class="actions">
-            <button class="primary" data-accept-robot-batch data-batch-index="${index}" ${canAccept ? "" : "disabled"}>
-              ${canAccept ? "确认并入此批" : "缺少下单日期，不能并入"}
-            </button>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-
-  target.innerHTML = `
-    ${html}
-    <div class="robot-panel">
-      <div class="robot-panel-head">
-        <span>订单库同步结果</span>
-        <span>${counts.orders || 0} 单 · ${counts.order_dates || 0} 个下单日期 · ${counts.items || 0} 行</span>
-      </div>
-    </div>
-    ${batchPanels}
-  `;
-}
-
-function receiptRow(item = {}) {
-  return `
-    <div class="receipt-grid">
-      ${input("code", item.code || "", "编码")}
-      ${input("product", item.product || "", "商品")}
-      ${input("spec", item.spec || "", "规格")}
-      ${input("unit", item.unit || "", "单位")}
-      ${input("quantity", item.quantity || "", "数量")}
-      <button class="icon-btn" data-remove-row title="删除">×</button>
-    </div>
-  `;
-}
-
-function addReceiptRow(item = {}) {
-  $("#receiptRows").insertAdjacentHTML("beforeend", receiptRow(item));
-}
-
-function collectReceiptRows() {
-  return $$(".receipt-grid", $("#receiptRows"))
-    .map((row) => {
-      const item = {};
-      $$("input", row).forEach((node) => {
-        item[node.dataset.name] = node.value.trim();
-      });
-      item.quantity = Number(item.quantity || 0);
-      return item;
-    })
-    .filter((item) => item.product && item.quantity);
+function selectedDate(id) {
+  return $(id).value || todayIso();
 }
 
 document.addEventListener("change", async (event) => {
-  const inputNode = event.target.closest("input[type=file][data-slot]");
-  if (!inputNode || !inputNode.files.length) return;
-  try {
-    await uploadFiles(inputNode.dataset.slot, inputNode.files);
-    inputNode.value = "";
-  } catch (error) {
-    alert(error.message);
+  const templateInput = event.target.closest("input[type=file][data-slot]");
+  if (templateInput?.files?.length) {
+    await uploadFiles(templateInput.dataset.slot, templateInput.files);
+    templateInput.value = "";
+    return;
   }
-});
-
-document.addEventListener("input", (event) => {
-  const textarea = event.target.closest("[data-text-slot]");
-  if (!textarea) return;
-  saveText(textarea.dataset.textSlot, textarea.value);
+  if (event.target.id === "productionRunFile") {
+    const file = event.target.files?.[0];
+    const label = $("#productionRunFileName");
+    if (file) {
+      label.textContent = `已选择 · ${file.name}`;
+      label.classList.remove("hidden");
+    } else {
+      label.classList.add("hidden");
+    }
+  }
 });
 
 document.addEventListener("click", async (event) => {
   const resetSlot = event.target.closest("[data-reset-slot]");
-  const resetModule = event.target.closest("[data-reset-module]");
-  const removeRow = event.target.closest("[data-remove-row]");
-  const addConfirm = event.target.closest("[data-add-confirm-row]");
-  const acceptConfirm = event.target.closest("[data-accept-confirm]");
-  const acceptRobotBatch = event.target.closest("[data-accept-robot-batch]");
+  const acceptBatch = event.target.closest("[data-accept-order-batch]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
   if (resetSlot) {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
     appState = data.state;
     renderState();
-  } else if (resetModule) {
-    const data = await request(`/api/reset-module/${resetModule.dataset.resetModule}`, { method: "DELETE" });
-    appState = data.state;
-    renderState();
-  } else if (removeRow) {
-    removeRow.closest(".confirm-grid, .receipt-grid").remove();
-  } else if (addConfirm) {
-    const container = addConfirm.closest(".confirm");
-    const includeStore = container.id === "shipmentConfirm";
-    $(".confirm-rows", container).insertAdjacentHTML(
-      "beforeend",
-      `<div class="confirm-grid ${includeStore ? "" : "no-store"}">
-        ${includeStore ? input("store", "", "门店") : ""}
-        ${input("product", "", "商品")}
-        ${input("quantity", "", "数量")}
-        ${input("unit", "", "单位")}
-        ${input("type", "新增", "类型")}
-        <button class="icon-btn" data-remove-row title="删除">×</button>
-      </div>`,
-    );
-  } else if (acceptConfirm) {
-    const container = acceptConfirm.closest(".confirm");
-    const includeStore = container.id === "shipmentConfirm";
-    const items = collectConfirm(container, includeStore);
-    if (includeStore) confirmedShipmentItems = items;
-    else confirmedOrderItems = items;
-    container.classList.add("hidden");
-  } else if (acceptRobotBatch) {
-    const batch = robotFetchedBatches[Number(acceptRobotBatch.dataset.batchIndex)];
+  } else if (acceptBatch) {
+    const container = acceptBatch.closest(".ai-confirm");
+    const batches = JSON.parse(container.dataset.payload || "[]");
+    const batch = batches[Number(acceptBatch.dataset.batchIndex)];
     if (!batch) return;
-    acceptedRobotItems = batch.items || [];
-    acceptedRobotOrderIds = batch.ids || [];
-    acceptedRobotOrderDate = batch.order_date || "";
-    $$("[data-accept-robot-batch]").forEach((button) => {
-      const currentBatch = robotFetchedBatches[Number(button.dataset.batchIndex)];
-      button.disabled = !currentBatch?.order_date;
-      button.textContent = "确认并入此批";
+    if (acceptBatch.dataset.acceptOrderBatch === "production") {
+      productionBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
+    } else {
+      shipmentBatch = { items: batch.items || [], orderDate: batch.order_date || "" };
+    }
+    $$("[data-accept-order-batch]", container).forEach((button) => {
+      button.disabled = false;
+      button.textContent = "确认此批";
     });
-    acceptRobotBatch.disabled = true;
-    acceptRobotBatch.textContent = "已选择，生成排产表后标记已拉取";
+    acceptBatch.disabled = true;
+    acceptBatch.textContent = "已确认";
+  } else if (event.target.closest("#acceptReceiptSync")) {
+    const container = $("#receiptSyncResult");
+    receiptItems = JSON.parse(container.dataset.payload || "[]");
+    event.target.disabled = true;
+    event.target.textContent = "已确认";
   } else if (retryRobotMark) {
     const notice = retryRobotMark.closest(".notice");
-    let ids = [];
-    try {
-      ids = JSON.parse(retryRobotMark.dataset.robotMarkIds || "[]");
-    } catch {
-      ids = [];
-    }
+    const ids = JSON.parse(retryRobotMark.dataset.robotMarkIds || "[]");
     retryRobotMark.disabled = true;
-    retryRobotMark.textContent = "正在重试...";
+    retryRobotMark.textContent = "正在重试";
     try {
       const data = await request("/api/robot/orders/retry-mark", {
         method: "POST",
         body: JSON.stringify({ ids }),
       });
+      const failed = data.robot_mark?.failed || [];
+      notice.textContent = failed.length ? `仍有 id 标记失败：${failed.join("、")}` : "订单库失败 id 已重试成功。";
       if (data.remaining_failures) {
         appState.settings = { ...(appState.settings || {}), robot_mark_failures: data.remaining_failures };
       }
-      const failed = data.robot_mark?.failed || [];
-      if (failed.length) {
-        notice.innerHTML = `订单库仍有 id 标记失败：${failed.map(escapeHtml).join("、")}。<button data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(failed))}">重试标记</button>`;
-      } else {
-        notice.textContent = "订单库失败 id 已重试标记成功。";
-      }
     } catch (error) {
-      notice.innerHTML = `${escapeHtml(error.message)} <button data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(ids))}">重试标记</button>`;
+      notice.textContent = error.message;
     }
   }
 });
 
 $("#refreshState").addEventListener("click", loadState);
 
-$("#parseOrder").addEventListener("click", async () => {
-  const text = $('[data-text-slot="module1_extra_text"]').value;
-  const data = await request("/api/ai/parse-order-text", {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-  renderConfirm($("#orderConfirm"), data.items || [], false);
-  if (data.message) $("#orderConfirm").insertAdjacentHTML("afterbegin", `<div class="notice">${escapeHtml(data.message)}</div>`);
-});
-
-$("#fetchRobotOrders").addEventListener("click", async () => {
-  const target = $("#robotFetchResult");
-  target.innerHTML = `<div class="notice">正在从订单库拉取...</div>`;
+$("#syncOrders").addEventListener("click", async () => {
+  const target = $("#orderSyncResult");
+  target.classList.remove("hidden");
+  target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
   try {
-    const data = await request("/api/robot/orders/fetch");
-    renderRobotFetch(data);
+    const data = await request(`/api/robot/orders/fetch?status=new&order_date=${encodeURIComponent(selectedDate("#dateModule1"))}`);
+    renderOrderBatches(target, data, "production");
   } catch (error) {
     target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
   }
 });
 
-$("#parseShipment").addEventListener("click", async () => {
-  const text = $('[data-text-slot="module4_ship_text"]').value;
-  const data = await request("/api/ai/parse-shipment-text", {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-  renderConfirm($("#shipmentConfirm"), data.items || [], true);
-  if (data.message) $("#shipmentConfirm").insertAdjacentHTML("afterbegin", `<div class="notice">${escapeHtml(data.message)}</div>`);
+$("#syncReceipts").addEventListener("click", async () => {
+  const target = $("#receiptSyncResult");
+  target.classList.remove("hidden");
+  target.innerHTML = `<div class="notice">正在同步入库数据...</div>`;
+  try {
+    const data = await request(`/api/robot/receipts/fetch?date=${encodeURIComponent(selectedDate("#dateModule3"))}`);
+    renderReceiptSync(data);
+  } catch (error) {
+    target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+  }
+});
+
+$("#syncShipment").addEventListener("click", async () => {
+  const target = $("#shipmentSyncResult");
+  target.classList.remove("hidden");
+  target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
+  try {
+    const data = await request(`/api/robot/orders/fetch?status=all&order_date=${encodeURIComponent(selectedDate("#dateModule4"))}`);
+    renderOrderBatches(target, data, "shipment");
+  } catch (error) {
+    target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+  }
 });
 
 $("#generateProduction").addEventListener("click", async () => {
@@ -482,19 +317,46 @@ $("#generateProduction").addEventListener("click", async () => {
     const data = await request("/api/generate/production", {
       method: "POST",
       body: JSON.stringify({
-        confirmed_items: [...confirmedOrderItems, ...acceptedRobotItems],
-        robot_order_ids: acceptedRobotOrderIds,
-        order_date: acceptedRobotOrderDate || null,
+        confirmed_items: productionBatch.items,
+        robot_order_ids: productionBatch.ids,
+        order_date: productionBatch.orderDate || selectedDate("#dateModule1"),
       }),
     });
     renderDownload($("#productionResult"), data);
     if (data.robot_mark && data.robot_mark.ok !== false) {
-      acceptedRobotItems = [];
-      acceptedRobotOrderIds = [];
-      acceptedRobotOrderDate = "";
+      productionBatch = { items: [], ids: [], orderDate: "" };
     }
   } catch (error) {
     $("#productionResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+  }
+});
+
+$("#generateMaterial").addEventListener("click", async () => {
+  const file = $("#productionRunFile").files?.[0];
+  if (!file) {
+    $("#materialResult").innerHTML = `<div class="notice">请先上传填好的完整排产表。</div>`;
+    return;
+  }
+  const form = new FormData();
+  form.append("production_file", file);
+  form.append("document_date", selectedDate("#dateModule2"));
+  try {
+    const data = await request("/api/generate/material-issue-upload", { method: "POST", body: form });
+    renderDownload($("#materialResult"), data);
+  } catch (error) {
+    $("#materialResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+  }
+});
+
+$("#generateReceipt").addEventListener("click", async () => {
+  try {
+    const data = await request("/api/generate/receipt", {
+      method: "POST",
+      body: JSON.stringify({ items: receiptItems, document_date: selectedDate("#dateModule3") }),
+    });
+    renderDownload($("#receiptResult"), data);
+  } catch (error) {
+    $("#receiptResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
   }
 });
 
@@ -502,7 +364,7 @@ $("#generateShipment").addEventListener("click", async () => {
   try {
     const data = await request("/api/generate/shipment", {
       method: "POST",
-      body: JSON.stringify({ confirmed_items: confirmedShipmentItems }),
+      body: JSON.stringify({ confirmed_items: shipmentBatch.items, order_date: shipmentBatch.orderDate || selectedDate("#dateModule4") }),
     });
     renderDownload($("#shipmentResult"), data);
   } catch (error) {
@@ -510,26 +372,10 @@ $("#generateShipment").addEventListener("click", async () => {
   }
 });
 
-$("#generateMaterial").addEventListener("click", async () => {
-  const workshopStockText = $('[data-text-slot="module2_stock_text"]').value;
-  const data = await request("/api/generate/material-issue", {
-    method: "POST",
-    body: JSON.stringify({ workshop_stock_text: workshopStockText }),
-  });
-  renderDownload($("#materialResult"), data);
+$$("[data-date]").forEach((input) => {
+  if (!input.value) input.value = todayIso();
 });
 
-$("#addReceiptRow").addEventListener("click", () => addReceiptRow());
-
-$("#generateReceipt").addEventListener("click", async () => {
-  const data = await request("/api/generate/receipt", {
-    method: "POST",
-    body: JSON.stringify({ items: collectReceiptRows() }),
-  });
-  renderDownload($("#receiptResult"), data);
-});
-
-addReceiptRow();
 loadState().catch((error) => {
   $("#apiState").textContent = error.message;
 });

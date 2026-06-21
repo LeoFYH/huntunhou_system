@@ -2,9 +2,11 @@ from datetime import date
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
+from openpyxl import Workbook, load_workbook
+
 from backend.services import robot_service
-from backend.services.excel_service import generate_production_workbook
-from backend.services.robot_service import normalize_robot_orders
+from backend.services.excel_service import generate_material_issue_workbook, generate_production_workbook
+from backend.services.robot_service import normalize_robot_orders, normalize_robot_receipts
 
 
 def test_normalize_robot_orders_groups_by_order_date_and_rejects_patch_without_base() -> None:
@@ -146,7 +148,6 @@ def test_generate_production_workbook_uses_order_date_for_filename() -> None:
     with TemporaryDirectory() as tmp:
         output, _warnings = generate_production_workbook(
             order_paths=[],
-            safety_path=None,
             production_template_path=None,
             confirmed_items=[{"product": "鸡腿", "quantity": 2, "unit": "件"}],
             order_date=date(2026, 6, 21),
@@ -154,6 +155,85 @@ def test_generate_production_workbook_uses_order_date_for_filename() -> None:
         )
         assert output.name == "排产表_2026-06-21.xlsx"
         assert output.exists()
+        wb = load_workbook(output, data_only=False)
+        ws = wb.active
+        assert ws["H3"].value is None
+        assert ws["L3"].value == "=H3"
+
+
+def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+
+        production_path = tmp_dir / "production.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["商品名称", "盘点库存数", "安全库存数", "入库数", "出库数量", "排产量"])
+        ws.append(["鸡腿", 10, 100, 0, 0, 100])
+        wb.save(production_path)
+
+        recipe_path = tmp_dir / "recipe.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "鸡腿投料单"
+        ws.append(["", "", "", "", "", "", ""])
+        ws.append(["", "原料名称", "单品净重 g", "得率", "", "", ""])
+        ws.append(["", "猪肉馅", 100, 1, "", "", ""])
+        wb.save(recipe_path)
+
+        conversion_path = tmp_dir / "conversion.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["存货名称", "数量"])
+        ws.append(["猪肉馅", 2])
+        wb.save(conversion_path)
+
+        owner_path = tmp_dir / "owner.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["存货名称", "所属库"])
+        ws.append(["猪肉馅", "冷冻"])
+        wb.save(owner_path)
+
+        output, missing, warnings = generate_material_issue_workbook(
+            production_path=production_path,
+            recipe_paths=[recipe_path],
+            conversion_path=conversion_path,
+            stock_owner_path=owner_path,
+            material_template_path=None,
+            workshop_stock_text="",
+            document_date=date(2026, 6, 21),
+            output_dir=tmp_dir,
+        )
+
+        assert missing == []
+        assert warnings == []
+        assert output is not None
+        wb = load_workbook(output)
+        ws = wb.active
+        assert ws["F2"].value == "所属库"
+        assert ws["F3"].value == "冷冻"
+
+
+def test_normalize_robot_receipts_groups_finished_goods() -> None:
+    result = normalize_robot_receipts(
+        {
+            "receipts": [
+                {
+                    "id": "r1",
+                    "store": "鼓楼店",
+                    "items": [
+                        {"name": "鸡汤虾肉馄饨", "qty": "2", "unit": "箱"},
+                        {"name": "鸡汤虾肉馄饨", "qty": 3, "unit": "箱"},
+                    ],
+                }
+            ]
+        }
+    )
+    assert result["ids"] == ["r1"]
+    assert result["counts"]["items"] == 2
+    assert result["grouped"][0]["store"] == "鼓楼店"
+    assert result["grouped"][0]["items"][0]["quantity"] == 5
 
 
 def test_robot_headers_include_bearer_token(monkeypatch) -> None:

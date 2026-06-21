@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from datetime import date, datetime
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,7 +20,7 @@ from .services.excel_service import (
     parse_rows,
     summarize_recipe_tables,
 )
-from .services.robot_service import fetch_robot_orders, mark_robot_orders_fetched
+from .services.robot_service import fetch_robot_orders, fetch_robot_receipts, mark_robot_orders_fetched
 from .storage import (
     clear_robot_mark_failures,
     ensure_storage,
@@ -36,7 +36,6 @@ from .storage import (
     seed_defaults_once,
     slot_path,
     slot_paths,
-    text_value,
 )
 
 
@@ -61,12 +60,9 @@ class RobotRetryPayload(BaseModel):
     ids: list[Any] | None = None
 
 
-class MaterialPayload(BaseModel):
-    workshop_stock_text: str = ""
-
-
 class ReceiptPayload(BaseModel):
     items: list[dict[str, Any]] = []
+    document_date: str | None = None
 
 
 @app.on_event("startup")
@@ -105,19 +101,6 @@ def _parse_order_date(value: str | None) -> date | None:
             raise HTTPException(status_code=400, detail=f"order_date 格式无效：{value}")
 
 
-def _uploaded_order_stores() -> set[str]:
-    stores: set[str] = set()
-    for path in slot_paths("module1_orders"):
-        try:
-            for row in parse_rows(path, "order"):
-                store = str(row.get("store") or "").strip()
-                if store:
-                    stores.add(store)
-        except Exception:
-            continue
-    return stores
-
-
 def _robot_failure_ids() -> list[Any]:
     ids: list[Any] = []
     seen: set[str] = set()
@@ -132,9 +115,17 @@ def _robot_failure_ids() -> list[Any]:
 
 
 @app.get("/api/robot/orders/fetch")
-async def robot_fetch_orders(status: str = "new") -> dict[str, Any]:
+async def robot_fetch_orders(status: str = "new", order_date: str | None = None) -> dict[str, Any]:
     try:
-        return await fetch_robot_orders(status=status, extra_base_stores=_uploaded_order_stores())
+        return await fetch_robot_orders(status=status, order_date=order_date)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/robot/receipts/fetch")
+async def robot_fetch_receipts(date: str | None = None) -> dict[str, Any]:
+    try:
+        return await fetch_robot_receipts(receipt_date=date)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -191,12 +182,9 @@ async def clear_module(module_id: str) -> dict[str, Any]:
 def _catalog() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     paths: list[Path] = []
     for slot in (
-        "module1_orders",
-        "module4_orders",
         "production_template",
-        "safety_stock",
-        "module2_production",
         "receipt_template",
+        "shipment_template",
     ):
         paths.extend(slot_paths(slot))
     products: dict[str, dict[str, str]] = {}
@@ -239,13 +227,12 @@ async def parse_receipt_photo() -> dict[str, Any]:
 
 @app.post("/api/generate/production")
 async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
-    order_paths = slot_paths("module1_orders")
+    order_paths: list[Path] = []
     if not order_paths and not payload.confirmed_items:
-        raise HTTPException(status_code=400, detail="请先上传订单或确认文字加单。")
+        raise HTTPException(status_code=400, detail="请先同步订单库并确认一个下单日期批次。")
     with TemporaryDirectory() as tmp:
         output, warnings = generate_production_workbook(
             order_paths=order_paths,
-            safety_path=slot_path("safety_stock"),
             production_template_path=slot_path("production_template"),
             confirmed_items=payload.confirmed_items,
             order_date=_parse_order_date(payload.order_date),
@@ -280,12 +267,13 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
 
 @app.post("/api/generate/shipment")
 async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
-    order_paths = slot_paths("module4_orders")
-    if not order_paths and not payload.confirmed_items:
-        raise HTTPException(status_code=400, detail="请先上传原始订单或确认文字发货。")
+    order_paths: list[Path] = []
+    if not payload.confirmed_items:
+        raise HTTPException(status_code=400, detail="请先同步订单库并确认发货批次。")
     with TemporaryDirectory() as tmp:
         output, warnings = generate_shipment_outputs(
             order_paths=order_paths,
+            template_path=slot_path("shipment_template"),
             confirmed_items=payload.confirmed_items,
             order_date=_parse_order_date(payload.order_date),
             output_dir=Path(tmp),
@@ -294,17 +282,24 @@ async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
     return {"output": registered, "warnings": warnings}
 
 
-@app.post("/api/generate/material-issue")
-async def generate_material(payload: MaterialPayload) -> dict[str, Any]:
-    workshop_text = payload.workshop_stock_text or text_value("module2_stock_text")
+@app.post("/api/generate/material-issue-upload")
+async def generate_material_upload(
+    production_file: UploadFile = File(...),
+    document_date: str | None = Form(default=None),
+) -> dict[str, Any]:
     with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        production_path = tmp_dir / (production_file.filename or "production.xlsx")
+        production_path.write_bytes(await production_file.read())
         output, missing, warnings = generate_material_issue_workbook(
-            production_path=slot_path("module2_production"),
+            production_path=production_path,
             recipe_paths=slot_paths("recipe_table"),
             conversion_path=slot_path("conversion_table"),
+            stock_owner_path=slot_path("stock_owner_table"),
             material_template_path=slot_path("material_template"),
-            workshop_stock_text=workshop_text,
-            output_dir=Path(tmp),
+            workshop_stock_text="",
+            document_date=_parse_order_date(document_date),
+            output_dir=tmp_dir,
         )
         if missing:
             return {"status": "missing_config", "missing": missing, "warnings": warnings}
@@ -319,6 +314,7 @@ async def generate_receipt(payload: ReceiptPayload) -> dict[str, Any]:
         output, warnings = generate_receipt_workbook(
             receipt_template_path=slot_path("receipt_template"),
             items=payload.items,
+            document_date=_parse_order_date(payload.document_date),
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)

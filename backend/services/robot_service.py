@@ -247,17 +247,97 @@ def normalize_robot_orders(payload: dict[str, Any], extra_base_stores: set[str] 
     }
 
 
-async def fetch_robot_orders(status: str = "new", extra_base_stores: set[str] | None = None) -> dict[str, Any]:
+def normalize_robot_receipts(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = payload.get("items") or payload.get("receipts") or payload.get("orders") or []
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    grouped: dict[str, dict[str, Any]] = {}
+    ids: list[Any] = []
+    for row in rows:
+        receipt_id = row.get("id")
+        if receipt_id is not None and receipt_id not in ids:
+            ids.append(receipt_id)
+        store = str(row.get("store") or row.get("workshop") or "未填写门店").strip()
+        raw_items = row.get("items") if isinstance(row.get("items"), list) else [row]
+        for raw_item in raw_items:
+            name = str(raw_item.get("name") or raw_item.get("product") or "").strip()
+            qty = to_number(raw_item.get("qty") if "qty" in raw_item else raw_item.get("quantity"))
+            if not name or qty is None:
+                warnings.append(f"入库数据 {receipt_id or ''} 有一行缺商品名或数量，已跳过。")
+                continue
+            normalized = {
+                "store": store,
+                "product": name,
+                "name": name,
+                "quantity": qty,
+                "qty": qty,
+                "unit": raw_item.get("unit", ""),
+                "code": _valid_code(raw_item.get("code")),
+                "spec": raw_item.get("spec", ""),
+                "source": "robot_receipt",
+                "receipt_id": receipt_id,
+            }
+            items.append(normalized)
+            bucket = grouped.setdefault(store, {"store": store, "items": {}})
+            key = _item_key(raw_item)
+            current = bucket["items"].setdefault(
+                key,
+                {
+                    "code": normalized["code"],
+                    "name": name,
+                    "spec": normalized["spec"],
+                    "unit": normalized["unit"],
+                    "quantity": 0.0,
+                },
+            )
+            current["quantity"] += float(qty)
+    grouped_list = [
+        {"store": bucket["store"], "items": sorted(bucket["items"].values(), key=lambda item: item["name"])}
+        for bucket in grouped.values()
+    ]
+    return {
+        "ids": ids,
+        "items": items,
+        "grouped": grouped_list,
+        "warnings": warnings,
+        "counts": {"items": len(items), "stores": len(grouped_list), "records": len(rows)},
+    }
+
+
+async def fetch_robot_orders(
+    status: str = "new",
+    extra_base_stores: set[str] | None = None,
+    order_date: str | None = None,
+) -> dict[str, Any]:
     if not ROBOT_API_BASE:
         raise RuntimeError("未配置 ROBOT_API_BASE。")
+    params = {"status": status}
+    if order_date:
+        params["order_date"] = order_date
     async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
         response = await client.get(
             f"{ROBOT_API_BASE}/api/orders",
-            params={"status": status},
+            params=params,
             headers=_robot_headers(),
         )
         response.raise_for_status()
     return normalize_robot_orders(response.json(), extra_base_stores=extra_base_stores)
+
+
+async def fetch_robot_receipts(receipt_date: str | None = None) -> dict[str, Any]:
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE。")
+    params = {}
+    if receipt_date:
+        params["date"] = receipt_date
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.get(
+            f"{ROBOT_API_BASE}/api/receipts",
+            params=params,
+            headers=_robot_headers(),
+        )
+        response.raise_for_status()
+    return normalize_robot_receipts(response.json())
 
 
 async def mark_robot_orders_fetched(ids: list[Any]) -> dict[str, Any]:
