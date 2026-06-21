@@ -122,6 +122,16 @@ function storeRows(groups) {
     .join("");
 }
 
+function itemRows(items) {
+  if (!items?.length) return `<div class="store-row"><span class="store-items">没有可确认的数据</span></div>`;
+  return items
+    .map((item) => {
+      const content = `${item.quantity}${item.unit || ""}`;
+      return `<div class="store-row"><span class="store-name">${escapeHtml(item.name)}</span> <span class="store-items">· ${escapeHtml(content)}</span></div>`;
+    })
+    .join("");
+}
+
 function renderRejected(rejectedPatches) {
   if (!rejectedPatches?.length) return "";
   const rows = rejectedPatches
@@ -172,8 +182,8 @@ function renderReceiptSync(data) {
   (data.warnings || []).forEach((warning) => {
     html += `<div class="notice">${escapeHtml(warning)}</div>`;
   });
-  html += `<div class="ct">入库数据 · ${data.counts?.stores || 0} 门店 · ${data.counts?.items || 0} 行</div>`;
-  html += storeRows(data.grouped || []);
+  html += `<div class="ct">产成品入库数据 · ${data.counts?.products || 0} 个品 · ${data.counts?.items || 0} 行</div>`;
+  html += itemRows(data.items_summary || []);
   html += `<div class="confirm-btns"><button class="mini ok" id="acceptReceiptSync">确认入库数据</button></div>`;
   target.dataset.payload = JSON.stringify(data.items || []);
   target.classList.remove("hidden");

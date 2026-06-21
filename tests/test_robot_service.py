@@ -215,13 +215,12 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         assert ws["F3"].value == "冷冻"
 
 
-def test_normalize_robot_receipts_groups_finished_goods() -> None:
+def test_normalize_robot_receipts_summarizes_finished_goods_without_store() -> None:
     result = normalize_robot_receipts(
         {
             "receipts": [
                 {
                     "id": "r1",
-                    "store": "鼓楼店",
                     "items": [
                         {"name": "鸡汤虾肉馄饨", "qty": "2", "unit": "箱"},
                         {"name": "鸡汤虾肉馄饨", "qty": 3, "unit": "箱"},
@@ -232,8 +231,10 @@ def test_normalize_robot_receipts_groups_finished_goods() -> None:
     )
     assert result["ids"] == ["r1"]
     assert result["counts"]["items"] == 2
-    assert result["grouped"][0]["store"] == "鼓楼店"
-    assert result["grouped"][0]["items"][0]["quantity"] == 5
+    assert result["counts"]["products"] == 1
+    assert "store" not in result["items"][0]
+    assert "grouped" not in result
+    assert result["items_summary"][0]["quantity"] == 5
 
 
 def test_robot_headers_include_bearer_token(monkeypatch) -> None:

@@ -251,13 +251,12 @@ def normalize_robot_receipts(payload: dict[str, Any]) -> dict[str, Any]:
     rows = payload.get("items") or payload.get("receipts") or payload.get("orders") or []
     items: list[dict[str, Any]] = []
     warnings: list[str] = []
-    grouped: dict[str, dict[str, Any]] = {}
+    summary: dict[str, dict[str, Any]] = {}
     ids: list[Any] = []
     for row in rows:
         receipt_id = row.get("id")
         if receipt_id is not None and receipt_id not in ids:
             ids.append(receipt_id)
-        store = str(row.get("store") or row.get("workshop") or "未填写门店").strip()
         raw_items = row.get("items") if isinstance(row.get("items"), list) else [row]
         for raw_item in raw_items:
             name = str(raw_item.get("name") or raw_item.get("product") or "").strip()
@@ -266,7 +265,6 @@ def normalize_robot_receipts(payload: dict[str, Any]) -> dict[str, Any]:
                 warnings.append(f"入库数据 {receipt_id or ''} 有一行缺商品名或数量，已跳过。")
                 continue
             normalized = {
-                "store": store,
                 "product": name,
                 "name": name,
                 "quantity": qty,
@@ -278,9 +276,8 @@ def normalize_robot_receipts(payload: dict[str, Any]) -> dict[str, Any]:
                 "receipt_id": receipt_id,
             }
             items.append(normalized)
-            bucket = grouped.setdefault(store, {"store": store, "items": {}})
             key = _item_key(raw_item)
-            current = bucket["items"].setdefault(
+            current = summary.setdefault(
                 key,
                 {
                     "code": normalized["code"],
@@ -291,16 +288,13 @@ def normalize_robot_receipts(payload: dict[str, Any]) -> dict[str, Any]:
                 },
             )
             current["quantity"] += float(qty)
-    grouped_list = [
-        {"store": bucket["store"], "items": sorted(bucket["items"].values(), key=lambda item: item["name"])}
-        for bucket in grouped.values()
-    ]
+    items_summary = sorted(summary.values(), key=lambda item: item["name"])
     return {
         "ids": ids,
         "items": items,
-        "grouped": grouped_list,
+        "items_summary": items_summary,
         "warnings": warnings,
-        "counts": {"items": len(items), "stores": len(grouped_list), "records": len(rows)},
+        "counts": {"items": len(items), "products": len(items_summary), "records": len(rows)},
     }
 
 
