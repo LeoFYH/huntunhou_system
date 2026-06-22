@@ -131,11 +131,11 @@ async function uploadFiles(slot, files) {
 function storeRows(groups) {
   if (!groups?.length) return `<div class="store-row"><span class="store-items">没有可确认的数据</span></div>`;
   return groups
-    .map((group) => {
+    .map((group, index) => {
       const items = (group.items || [])
         .map((item) => `${item.name} ${item.quantity}${item.unit || ""}`)
         .join(" · ");
-      return `<div class="store-row"><span class="store-name">${escapeHtml(group.store)}</span> <span class="store-items">· ${escapeHtml(items)}</span></div>`;
+      return `<div class="store-row"><span class="store-name">分组 ${index + 1}</span> <span class="store-items">· ${escapeHtml(items)}</span></div>`;
     })
     .join("");
 }
@@ -153,13 +153,13 @@ function itemRows(items) {
 function renderRejected(rejectedPatches) {
   if (!rejectedPatches?.length) return "";
   const rows = rejectedPatches
-    .map((patch) => {
+    .map((patch, index) => {
       const content = (patch.items || []).map((item) => item.label || `${item.name} ${item.qty || ""}${item.unit || ""}`).join("、");
       const dateLabel = patch.order_date ? `${patch.order_date} · ` : "";
-      return `<li>${escapeHtml(dateLabel)}${escapeHtml(patch.store)}：${escapeHtml(content || "未填写商品")}</li>`;
+      return `<li>${escapeHtml(dateLabel)}分组 ${index + 1}：${escapeHtml(content || "未填写商品")}</li>`;
     })
     .join("");
-  return `<div class="notice">以下加货找不到同下单日期、同门店主订单，请先处理：<ul>${rows}</ul></div>`;
+  return `<div class="notice">以下加货找不到同下单日期、同分组主订单，请先处理：<ul>${rows}</ul></div>`;
 }
 
 function clearOrderBatch(mode) {
@@ -207,7 +207,7 @@ function renderOrderBatches(target, data, mode) {
     .map((batch, index) => {
       const counts = batch.counts || {};
       return `
-        <div class="ct">下单日期 ${escapeHtml(batch.order_date || "未填写")} · ${counts.orders || 0} 单 · ${counts.stores || 0} 门店 · ${counts.items || 0} 行</div>
+        <div class="ct">下单日期 ${escapeHtml(batch.order_date || "未填写")} · ${counts.orders || 0} 单 · ${counts.stores || 0} 组 · ${counts.items || 0} 行</div>
         ${storeRows(batch.grouped || [])}
         <div class="confirm-btns">
           <button class="mini ok" data-accept-order-batch="${mode}" data-batch-index="${index}" ${batch.order_date ? "" : "disabled"}>确认此批</button>

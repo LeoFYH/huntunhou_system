@@ -40,7 +40,7 @@ from .storage import (
 )
 
 
-app = FastAPI(title="馄饨侯订单工具", version="0.1.0")
+app = FastAPI(title="订单工具", version="0.1.0")
 
 
 class TextPayload(BaseModel):
