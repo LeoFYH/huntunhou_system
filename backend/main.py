@@ -21,7 +21,15 @@ from .services.excel_service import (
     parse_rows,
     summarize_recipe_tables,
 )
-from .services.robot_service import fetch_robot_orders, fetch_robot_receipts, mark_robot_orders_fetched, unmark_robot_orders
+from .services.robot_service import (
+    fetch_robot_orders,
+    fetch_robot_receipts,
+    mark_robot_orders_fetched,
+    mark_robot_receipts_fetched,
+    unmark_robot_orders,
+    unmark_robot_receipts,
+)
+from .services.robot_marking import mark_robot_orders_for_output
 from .storage import (
     clear_robot_mark_failures,
     ensure_storage,
@@ -63,6 +71,7 @@ class RobotRetryPayload(BaseModel):
 
 class ReceiptPayload(BaseModel):
     items: list[dict[str, Any]] = []
+    robot_receipt_ids: list[Any] = []
     document_date: str | None = None
 
 
@@ -172,6 +181,23 @@ async def robot_unmark_orders(payload: RobotRetryPayload) -> dict[str, Any]:
     return {"robot_unmark": result, "warnings": warnings}
 
 
+@app.post("/api/robot/receipts/unmark")
+async def robot_unmark_receipts(payload: RobotRetryPayload) -> dict[str, Any]:
+    ids = payload.ids or []
+    if not ids:
+        return {"robot_receipt_unmark": {"skipped": True, "ids": []}, "warnings": []}
+    try:
+        result = await unmark_robot_receipts(ids)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    warnings: list[str] = []
+    failed = result.get("failed", [])
+    if failed:
+        warnings.append(f"入库数据有 {len(failed)} 个 id 退回失败：{failed}")
+    return {"robot_receipt_unmark": result, "warnings": warnings}
+
+
 @app.post("/api/upload/{slot}")
 async def upload(slot: str, files: list[UploadFile] = File(...)) -> dict[str, Any]:
     saved = []
@@ -258,29 +284,7 @@ async def generate_production(payload: GeneratePayload) -> dict[str, Any]:
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)
-    robot_mark = None
-    if payload.robot_order_ids:
-        try:
-            robot_mark = await mark_robot_orders_fetched(payload.robot_order_ids)
-            succeeded = robot_mark.get("succeeded", [])
-            failed = robot_mark.get("failed", [])
-            if succeeded:
-                clear_robot_mark_failures(succeeded)
-            if failed:
-                warnings.append(f"排产表已生成，但订单库有 {len(failed)} 个 id 标记失败，可稍后重试：{failed}")
-                record_robot_mark_failures(
-                    failed,
-                    "mark_fetched partial failure",
-                    {"output_id": registered["id"], "output_name": registered["name"]},
-                )
-        except Exception as exc:
-            warnings.append(f"排产表已生成，但订单库 mark_fetched 失败：{exc}")
-            record_robot_mark_failures(
-                payload.robot_order_ids,
-                str(exc),
-                {"output_id": registered["id"], "output_name": registered["name"]},
-            )
-            robot_mark = {"ok": False, "error": str(exc), "ids": payload.robot_order_ids}
+    robot_mark = await mark_robot_orders_for_output(payload.robot_order_ids, warnings, registered, "排产表")
     return {"output": registered, "warnings": warnings, "robot_mark": robot_mark}
 
 
@@ -316,7 +320,8 @@ async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)
-    return {"output": registered, "warnings": warnings}
+    robot_mark = await mark_robot_orders_for_output(payload.robot_order_ids, warnings, registered, "发货单")
+    return {"output": registered, "warnings": warnings, "robot_mark": robot_mark}
 
 
 @app.post("/api/generate/material-issue-upload")
@@ -355,7 +360,17 @@ async def generate_receipt(payload: ReceiptPayload) -> dict[str, Any]:
             output_dir=Path(tmp),
         )
         registered = register_output(output, output.name)
-    return {"output": registered, "warnings": warnings}
+    robot_receipt_mark = None
+    if payload.robot_receipt_ids:
+        try:
+            robot_receipt_mark = await mark_robot_receipts_fetched(payload.robot_receipt_ids)
+            failed = robot_receipt_mark.get("failed", [])
+            if failed:
+                warnings.append(f"入库单已生成，但入库库有 {len(failed)} 个 id 标记失败：{failed}")
+        except Exception as exc:
+            warnings.append(f"入库单已生成，但入库库 mark_fetched 失败：{exc}")
+            robot_receipt_mark = {"ok": False, "error": str(exc), "ids": payload.robot_receipt_ids}
+    return {"output": registered, "warnings": warnings, "robot_receipt_mark": robot_receipt_mark}
 
 
 @app.get("/api/download/{output_id}")

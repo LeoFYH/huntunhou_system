@@ -3,8 +3,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 let appState = {};
 let productionBatch = { items: [], ids: [], orderDate: "" };
-let receiptItems = [];
-let shipmentBatch = { items: [], orderDate: "" };
+let receiptBatch = { items: [], ids: [], date: "" };
+let shipmentBatch = { items: [], ids: [], orderDate: "" };
 
 async function request(path, options = {}) {
   let response;
@@ -162,11 +162,15 @@ function renderRejected(rejectedPatches) {
   return `<div class="notice">以下加货找不到同下单日期、同分组主订单，请先处理：<ul>${rows}</ul></div>`;
 }
 
+function emptyOrderBatch() {
+  return { items: [], ids: [], orderDate: "" };
+}
+
 function clearOrderBatch(mode) {
   if (mode === "production") {
-    productionBatch = { items: [], ids: [], orderDate: "" };
+    productionBatch = emptyOrderBatch();
   } else {
-    shipmentBatch = { items: [], orderDate: "" };
+    shipmentBatch = emptyOrderBatch();
   }
 }
 
@@ -175,7 +179,7 @@ function selectOrderBatch(container, batch, mode, button = null) {
   if (mode === "production") {
     productionBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
   } else {
-    shipmentBatch = { items: batch.items || [], orderDate: batch.order_date || "" };
+    shipmentBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
   }
   $$("[data-accept-order-batch]", container).forEach((item) => {
     item.disabled = false;
@@ -226,6 +230,7 @@ function renderOrderBatches(target, data, mode) {
 
 function renderReceiptSync(data) {
   const target = $("#receiptSyncResult");
+  receiptBatch = { items: [], ids: [], date: "" };
   let html = "";
   (data.warnings || []).forEach((warning) => {
     html += `<div class="notice">${escapeHtml(warning)}</div>`;
@@ -233,14 +238,59 @@ function renderReceiptSync(data) {
   html += `<div class="ct">产成品入库数据 · ${data.counts?.products || 0} 个品 · ${data.counts?.items || 0} 行</div>`;
   html += itemRows(data.items_summary || []);
   html += `<div class="confirm-btns"><button class="mini ok" id="acceptReceiptSync">确认入库数据</button></div>`;
-  target.dataset.payload = JSON.stringify(data.items || []);
+  target.dataset.payload = JSON.stringify({ items: data.items || [], ids: data.ids || [] });
   target.classList.remove("hidden");
   target.innerHTML = html;
 }
 
-function renderDownload(target, data) {
+function clearOrderSyncResults() {
+  ["#orderSyncResult", "#shipmentSyncResult"].forEach((selector) => {
+    const target = $(selector);
+    if (!target) return;
+    target.classList.add("hidden");
+    target.innerHTML = "";
+    delete target.dataset.payload;
+  });
+}
+
+function invalidateOrderModulesAfterRollback(sourceMode, count) {
+  productionBatch = emptyOrderBatch();
+  shipmentBatch = emptyOrderBatch();
+  clearOrderSyncResults();
+  const sourceLabel = sourceMode === "shipment" ? "模块 4 出货" : "模块 1 排产";
+  const countText = count ? `${count} 张订单` : "本批订单";
+  const message = `${sourceLabel}已退回${countText}为未拉取；模块 1 排产和模块 4 出货都需要重新同步订单库。`;
+  ["#productionResult", "#shipmentResult"].forEach((selector) => {
+    const target = $(selector);
+    if (!target) return;
+    target.innerHTML = `<div class="notice">${escapeHtml(message)}</div>`;
+  });
+}
+
+function orderDateLabel(mode, fallbackDate = "") {
+  if (fallbackDate) return fallbackDate;
+  if (mode === "shipment") return shipmentBatch.orderDate || selectedDate("#dateModule4");
+  return productionBatch.orderDate || selectedDate("#dateModule1");
+}
+
+function renderOrderRollbackBlock(ids, mode, dateLabel, summary) {
+  if (!ids?.length) return "";
+  const modeText = mode === "shipment" ? "本次发货使用" : "本批已锁定";
+  const detail =
+    mode === "shipment"
+      ? `${modeText} ${ids.length} 张订单（下单日期 ${escapeHtml(dateLabel)}）。如果在这里退回，本批订单会变回未拉取，模块 1 排产和模块 4 出货都需要重新同步。`
+      : `${modeText} ${ids.length} 张订单（下单日期 ${escapeHtml(dateLabel)}）。填表期间新来的加货不在这批里。退回后模块 1 排产和模块 4 出货都需要重新同步。`;
+  return `
+    <div class="download"><span>${escapeHtml(summary)}</span></div>
+    <div class="lockbar"><span>${detail}</span></div>
+    <button class="return-btn" data-return-order-mode="${mode}" data-return-robot-orders="${escapeHtml(JSON.stringify(ids))}">作废本批 · 退回订单</button>
+  `;
+}
+
+function renderDownload(target, data, options = {}) {
   const warnings = data.warnings || [];
   const missing = data.missing || [];
+  const mode = options.mode || "production";
   let html = "";
   if (missing.length) html += `<div class="notice">缺少：${missing.map(escapeHtml).join("、")}</div>`;
   warnings.forEach((warning) => {
@@ -252,17 +302,45 @@ function renderDownload(target, data) {
   if (data.robot_mark && !data.robot_mark.skipped) {
     const lockedIds = data.robot_mark.succeeded || (data.robot_mark.ok !== false ? data.robot_mark.ids || [] : []);
     if (lockedIds.length) {
-      html += `<div class="download"><span>${lockedIds.length} 张订单已标记为已拉取</span></div>`;
+      const dateLabel = orderDateLabel(mode, options.orderLock?.date || "");
+      html += renderOrderRollbackBlock(lockedIds, mode, dateLabel, `${lockedIds.length} 张订单已标记为已拉取`);
     }
-    if (lockedIds.length) {
-      const dateLabel = productionBatch.orderDate || selectedDate("#dateModule1");
-      html += `<div class="lockbar"><span>本批已锁定 ${lockedIds.length} 张订单（下单日期 ${escapeHtml(dateLabel)}）。填表期间新来的加货不在这批里。若要把新加货纳进来，点下面退回后重新同步。</span></div>`;
-      html += `<button class="return-btn" data-return-robot-orders="${escapeHtml(JSON.stringify(lockedIds))}">作废本批 · 退回订单</button>`;
-    }
+  }
+  if (!data.robot_mark && options.orderLock?.ids?.length) {
+    const lockedIds = options.orderLock.ids;
+    const dateLabel = orderDateLabel(mode, options.orderLock.date || "");
+    html += renderOrderRollbackBlock(lockedIds, mode, dateLabel, `${lockedIds.length} 张订单用于本次发货`);
   }
   if (data.robot_mark?.failed?.length) {
     const failedIds = data.robot_mark.failed;
     html += `<div class="notice">订单库部分 id 标记失败：${failedIds.map(escapeHtml).join("、")}。<button class="mini" data-retry-robot-mark data-robot-mark-ids="${escapeHtml(JSON.stringify(failedIds))}">重试标记</button></div>`;
+  }
+  target.innerHTML = html;
+}
+
+function renderReceiptDownload(target, data) {
+  const warnings = data.warnings || [];
+  const missing = data.missing || [];
+  let html = "";
+  if (missing.length) html += `<div class="notice">缺少：${missing.map(escapeHtml).join("、")}</div>`;
+  warnings.forEach((warning) => {
+    html += `<div class="notice">${escapeHtml(warning)}</div>`;
+  });
+  if (data.output) {
+    html += `<div class="download"><span>${escapeHtml(data.output.name)}</span><a href="${data.output.url}">下载</a></div>`;
+  }
+  if (data.robot_receipt_mark && !data.robot_receipt_mark.skipped) {
+    const lockedIds = data.robot_receipt_mark.succeeded || (data.robot_receipt_mark.ok !== false ? data.robot_receipt_mark.ids || [] : []);
+    if (lockedIds.length) {
+      html += `<div class="download"><span>${lockedIds.length} 条入库数据已标记为已拉取</span></div>`;
+      const dateLabel = receiptBatch.date || selectedDate("#dateModule3");
+      html += `<div class="lockbar"><span>本批已锁定 ${lockedIds.length} 条入库数据（入库日期 ${escapeHtml(dateLabel)}）。若要把新入库数据纳进来，点下面退回后重新同步。</span></div>`;
+      html += `<button class="return-btn" data-return-robot-receipts="${escapeHtml(JSON.stringify(lockedIds))}">作废本批 · 退回入库数据</button>`;
+    }
+  }
+  if (data.robot_receipt_mark?.failed?.length) {
+    const failedIds = data.robot_receipt_mark.failed;
+    html += `<div class="notice">入库库部分 id 标记失败：${failedIds.map(escapeHtml).join("、")}。</div>`;
   }
   target.innerHTML = html;
 }
@@ -305,6 +383,7 @@ document.addEventListener("click", async (event) => {
   const acceptBatch = event.target.closest("[data-accept-order-batch]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
   const returnRobotOrders = event.target.closest("[data-return-robot-orders]");
+  const returnRobotReceipts = event.target.closest("[data-return-robot-receipts]");
   if (resetSlot) {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
     appState = data.state;
@@ -316,7 +395,12 @@ document.addEventListener("click", async (event) => {
     selectOrderBatch(container, batch, acceptBatch.dataset.acceptOrderBatch, acceptBatch);
   } else if (event.target.closest("#acceptReceiptSync")) {
     const container = $("#receiptSyncResult");
-    receiptItems = JSON.parse(container.dataset.payload || "[]");
+    const payload = JSON.parse(container.dataset.payload || "{}");
+    receiptBatch = {
+      items: payload.items || [],
+      ids: payload.ids || [],
+      date: selectedDate("#dateModule3"),
+    };
     event.target.disabled = true;
     event.target.textContent = "已确认";
   } else if (retryRobotMark) {
@@ -340,8 +424,9 @@ document.addEventListener("click", async (event) => {
   } else if (returnRobotOrders) {
     const ids = JSON.parse(returnRobotOrders.dataset.returnRobotOrders || "[]");
     if (!ids.length) return;
+    const mode = returnRobotOrders.dataset.returnOrderMode || "production";
     const outcome = await runOnce(returnRobotOrders, "正在退回...", async () => {
-      const result = $("#productionResult");
+      const result = mode === "shipment" ? $("#shipmentResult") : $("#productionResult");
       try {
         const data = await request("/api/robot/orders/unmark", {
           method: "POST",
@@ -353,10 +438,7 @@ document.addEventListener("click", async (event) => {
           result.innerHTML += `<div class="notice">部分订单退回失败：${failed.map(escapeHtml).join("、")}。成功退回：${succeeded.map(escapeHtml).join("、") || "无"}。</div>`;
           return;
         }
-        productionBatch = { items: [], ids: [], orderDate: "" };
-        $("#orderSyncResult").classList.add("hidden");
-        $("#orderSyncResult").innerHTML = "";
-        result.innerHTML += `<div class="download"><span>本批订单已退回为未拉取，请重新同步订单库。</span></div>`;
+        invalidateOrderModulesAfterRollback(mode, succeeded.length || ids.length);
         return { ok: true };
       } catch (error) {
         result.innerHTML += `<div class="notice">${escapeHtml(error.message)}</div>`;
@@ -364,9 +446,42 @@ document.addEventListener("click", async (event) => {
       }
     });
     if (outcome?.ok) {
-      returnRobotOrders.disabled = true;
-      returnRobotOrders.textContent = "已退回，请重新同步";
-      returnRobotOrders.removeAttribute("data-return-robot-orders");
+      $$("[data-return-robot-orders]").forEach((button) => {
+        button.disabled = true;
+        button.textContent = "已退回，请重新同步";
+        button.removeAttribute("data-return-robot-orders");
+      });
+    }
+  } else if (returnRobotReceipts) {
+    const ids = JSON.parse(returnRobotReceipts.dataset.returnRobotReceipts || "[]");
+    if (!ids.length) return;
+    const outcome = await runOnce(returnRobotReceipts, "正在退回...", async () => {
+      const result = $("#receiptResult");
+      try {
+        const data = await request("/api/robot/receipts/unmark", {
+          method: "POST",
+          body: JSON.stringify({ ids }),
+        });
+        const failed = data.robot_receipt_unmark?.failed || [];
+        const succeeded = data.robot_receipt_unmark?.succeeded || [];
+        if (failed.length) {
+          result.innerHTML += `<div class="notice">部分入库数据退回失败：${failed.map(escapeHtml).join("、")}。成功退回：${succeeded.map(escapeHtml).join("、") || "无"}。</div>`;
+          return;
+        }
+        receiptBatch = { items: [], ids: [], date: "" };
+        $("#receiptSyncResult").classList.add("hidden");
+        $("#receiptSyncResult").innerHTML = "";
+        result.innerHTML += `<div class="download"><span>本批入库数据已退回为未拉取，请重新同步入库数据。</span></div>`;
+        return { ok: true };
+      } catch (error) {
+        result.innerHTML += `<div class="notice">${escapeHtml(error.message)}</div>`;
+        return { ok: false };
+      }
+    });
+    if (outcome?.ok) {
+      returnRobotReceipts.disabled = true;
+      returnRobotReceipts.textContent = "已退回，请重新同步";
+      returnRobotReceipts.removeAttribute("data-return-robot-receipts");
     }
   }
 });
@@ -432,7 +547,7 @@ $("#generateProduction").addEventListener("click", async (event) => {
           order_date: productionBatch.orderDate || selectedDate("#dateModule1"),
         }),
       });
-      renderDownload(target, data);
+      renderDownload(target, data, { mode: "production" });
     } catch (error) {
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }
@@ -480,16 +595,20 @@ $("#generateMaterial").addEventListener("click", async (event) => {
 $("#generateReceipt").addEventListener("click", async (event) => {
   await runOnce(event.currentTarget, `正在生成...`, async () => {
     const target = $("#receiptResult");
-    if (!receiptItems.length) {
+    if (!receiptBatch.items.length) {
       target.innerHTML = `<div class="notice">请先同步入库数据并确认。</div>`;
       return;
     }
     try {
       const data = await request("/api/generate/receipt", {
         method: "POST",
-        body: JSON.stringify({ items: receiptItems, document_date: selectedDate("#dateModule3") }),
+        body: JSON.stringify({
+          items: receiptBatch.items,
+          robot_receipt_ids: receiptBatch.ids,
+          document_date: receiptBatch.date || selectedDate("#dateModule3"),
+        }),
       });
-      renderDownload(target, data);
+      renderReceiptDownload(target, data);
     } catch (error) {
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }
@@ -504,11 +623,17 @@ $("#generateShipment").addEventListener("click", async (event) => {
       return;
     }
     try {
+      const orderDate = shipmentBatch.orderDate || selectedDate("#dateModule4");
+      const orderLock = { ids: shipmentBatch.ids || [], date: orderDate };
       const data = await request("/api/generate/shipment", {
         method: "POST",
-        body: JSON.stringify({ confirmed_items: shipmentBatch.items, order_date: shipmentBatch.orderDate || selectedDate("#dateModule4") }),
+        body: JSON.stringify({
+          confirmed_items: shipmentBatch.items,
+          robot_order_ids: shipmentBatch.ids,
+          order_date: orderDate,
+        }),
       });
-      renderDownload(target, data);
+      renderDownload(target, data, { mode: "shipment", orderLock });
     } catch (error) {
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }

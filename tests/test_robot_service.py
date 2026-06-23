@@ -7,6 +7,7 @@ from openpyxl import Workbook, load_workbook
 
 from backend.services import robot_service
 from backend.services.excel_service import generate_completed_production_workbook, generate_material_issue_workbook, generate_production_workbook
+from backend.services import robot_marking
 from backend.services.robot_service import normalize_robot_orders, normalize_robot_receipts
 
 
@@ -339,3 +340,82 @@ def test_robot_headers_include_bearer_token(monkeypatch) -> None:
 
 def test_unmark_robot_orders_skips_empty_ids() -> None:
     assert asyncio.run(robot_service.unmark_robot_orders([])) == {"skipped": True, "ids": []}
+
+
+def test_mark_robot_orders_for_output_clears_successful_shipment_ids(monkeypatch) -> None:
+    async def fake_mark(ids):
+        return {"succeeded": ids, "failed": [], "ok": True}
+
+    cleared = []
+    recorded = []
+    monkeypatch.setattr(robot_marking, "mark_robot_orders_fetched", fake_mark)
+    monkeypatch.setattr(robot_marking, "clear_robot_mark_failures", lambda ids: cleared.append(ids))
+    monkeypatch.setattr(robot_marking, "record_robot_mark_failures", lambda *args: recorded.append(args))
+
+    warnings: list[str] = []
+    result = asyncio.run(
+        robot_marking.mark_robot_orders_for_output(
+            [101, 102],
+            warnings,
+            {"id": "out-1", "name": "发货单_2026-06-21.xlsx"},
+            "发货单",
+        )
+    )
+
+    assert result == {"succeeded": [101, 102], "failed": [], "ok": True}
+    assert warnings == []
+    assert cleared == [[101, 102]]
+    assert recorded == []
+
+
+def test_mark_robot_orders_for_output_records_failed_shipment_ids(monkeypatch) -> None:
+    async def fake_mark(_ids):
+        return {"succeeded": [101], "failed": [102], "ok": False}
+
+    recorded = []
+    monkeypatch.setattr(robot_marking, "mark_robot_orders_fetched", fake_mark)
+    monkeypatch.setattr(robot_marking, "clear_robot_mark_failures", lambda _ids: None)
+    monkeypatch.setattr(robot_marking, "record_robot_mark_failures", lambda *args: recorded.append(args))
+
+    warnings: list[str] = []
+    result = asyncio.run(
+        robot_marking.mark_robot_orders_for_output(
+            [101, 102],
+            warnings,
+            {"id": "out-1", "name": "发货单_2026-06-21.xlsx"},
+            "发货单",
+        )
+    )
+
+    assert result == {"succeeded": [101], "failed": [102], "ok": False}
+    assert warnings == ["发货单已生成，但订单库有 1 个 id 标记失败，可稍后重试：[102]"]
+    assert recorded == [
+        (
+            [102],
+            "mark_fetched partial failure",
+            {"output_id": "out-1", "output_name": "发货单_2026-06-21.xlsx"},
+        )
+    ]
+
+
+def test_generate_shipment_endpoint_is_the_order_mark_call_site() -> None:
+    source = Path("backend/main.py").read_text(encoding="utf-8")
+    completed_block = source.split('@app.post("/api/generate/production-complete-upload")', 1)[1].split(
+        '@app.post("/api/generate/shipment")',
+        1,
+    )[0]
+    shipment_block = source.split('@app.post("/api/generate/shipment")', 1)[1].split(
+        '@app.post("/api/generate/material-issue-upload")',
+        1,
+    )[0]
+
+    assert "mark_robot_orders_for_output" not in completed_block
+    assert 'mark_robot_orders_for_output(payload.robot_order_ids, warnings, registered, "发货单")' in shipment_block
+
+
+def test_mark_robot_receipts_skips_empty_ids() -> None:
+    assert asyncio.run(robot_service.mark_robot_receipts_fetched([])) == {"skipped": True, "ids": []}
+
+
+def test_unmark_robot_receipts_skips_empty_ids() -> None:
+    assert asyncio.run(robot_service.unmark_robot_receipts([])) == {"skipped": True, "ids": []}

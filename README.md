@@ -45,11 +45,15 @@ ROBOT_API_TOKEN=机器人共享 token
 - `GET {ROBOT_API_BASE}/api/orders?status=new`
 - `POST {ROBOT_API_BASE}/api/orders/mark_fetched`，body 为 `{"ids":[...]}`
 - `POST {ROBOT_API_BASE}/api/orders/unmark`，body 为 `{"ids":[...]}`，把已拉取订单退回为未拉取
+- `GET {ROBOT_API_BASE}/api/receipts?date=YYYY-MM-DD`
+- `POST {ROBOT_API_BASE}/api/receipts/mark_fetched`，body 为 `{"ids":["r001"]}`
+- `POST {ROBOT_API_BASE}/api/receipts/unmark`，body 为 `{"ids":["r001"]}`，把已拉取入库数据退回为未拉取
 
 配置 `ROBOT_API_TOKEN` 后，请求会带 `Authorization: Bearer <ROBOT_API_TOKEN>`。
 
 页面模块 1 的“同步订单库”只拉取已识别、已核验订单，展示按下单日期拆开的批次；用户确认并生成排产表成功后，后端再调用 `mark_fetched`，避免生成失败时误标记。
 生成待补充排产表后，页面会显示“作废本批 · 退回订单”按钮；退回会调用 `unmark` 解锁本批已成功标记的订单，之后用户手动重新同步，可把期间新增的加货一起纳入最新一批。
+模块 4 的“同步订单库”使用同一个订单库和同一组订单 id；发货单生成成功后也会调用 `mark_fetched` 加上传锁，并显示“作废本批 · 退回订单”。模块 1 或模块 4 任意一处退回成功，页面都会同时清空排产和发货的订单批次状态，两个模块都需要重新同步。
 
 订单库同步规则：
 
@@ -61,6 +65,9 @@ ROBOT_API_TOKEN=机器人共享 token
 - 找不到同门店主订单的 `patch` 会被拒绝并在前端列出门店和加货内容，不进入汇总。
 - `mark_fetched` 若返回 `{succeeded:[...], failed:[...]}`，Excel 不受影响；失败 id 会本地记录，前端可点按钮重试标记。
 - `unmark` 建议同样返回 `{succeeded:[...], failed:[...]}` 并保持幂等；已经是 `new` 的 id 再退回也算 `succeeded`，只有不存在的 id 算 `failed`。
+- 排产和发货共用订单 mark 状态；`unmark` 按本批订单 id 退回，不按整天或全库退回，避免误伤其他批次。
+
+模块 3 的“同步入库数据”按日期拉机器人入库库，用户确认并生成入库单成功后，Web 工具后端会调用入库 `mark_fetched`。页面会显示“作废本批 · 退回入库数据”按钮；退回会调用入库 `unmark`，之后可重新同步同一天的入库数据。
 
 ## 数据保存
 

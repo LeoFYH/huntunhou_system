@@ -357,6 +357,29 @@ async def mark_robot_orders_fetched(ids: list[Any]) -> dict[str, Any]:
     return result
 
 
+async def mark_robot_receipts_fetched(ids: list[Any]) -> dict[str, Any]:
+    if not ids:
+        return {"skipped": True, "ids": []}
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE，无法标记入库数据已拉取。")
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{ROBOT_API_BASE}/api/receipts/mark_fetched",
+            json={"ids": ids},
+            headers=_robot_headers(),
+        )
+        response.raise_for_status()
+    if not response.content:
+        return {"ok": True, "succeeded": ids, "failed": []}
+    result = response.json()
+    if "succeeded" not in result and "failed" not in result:
+        result = {"ok": True, "succeeded": ids, "failed": [], "raw": result}
+    result.setdefault("succeeded", [])
+    result.setdefault("failed", [])
+    result["ok"] = not result["failed"]
+    return result
+
+
 async def unmark_robot_orders(ids: list[Any]) -> dict[str, Any]:
     if not ids:
         return {"skipped": True, "ids": []}
@@ -365,6 +388,29 @@ async def unmark_robot_orders(ids: list[Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
         response = await client.post(
             f"{ROBOT_API_BASE}/api/orders/unmark",
+            json={"ids": ids},
+            headers=_robot_headers(),
+        )
+        response.raise_for_status()
+    if not response.content:
+        return {"ok": True, "succeeded": ids, "failed": []}
+    result = response.json()
+    if "succeeded" not in result and "failed" not in result:
+        result = {"ok": True, "succeeded": ids, "failed": [], "raw": result}
+    result.setdefault("succeeded", [])
+    result.setdefault("failed", [])
+    result["ok"] = not result["failed"]
+    return result
+
+
+async def unmark_robot_receipts(ids: list[Any]) -> dict[str, Any]:
+    if not ids:
+        return {"skipped": True, "ids": []}
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE，无法退回入库数据。")
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{ROBOT_API_BASE}/api/receipts/unmark",
             json={"ids": ids},
             headers=_robot_headers(),
         )
