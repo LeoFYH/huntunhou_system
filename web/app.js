@@ -128,16 +128,35 @@ async function uploadFiles(slot, files) {
   renderState();
 }
 
-function storeRows(groups) {
-  if (!groups?.length) return `<div class="store-row"><span class="store-items">没有可确认的数据</span></div>`;
-  return groups
-    .map((group, index) => {
-      const items = (group.items || [])
-        .map((item) => `${item.name} ${item.quantity}${item.unit || ""}`)
-        .join(" · ");
-      return `<div class="store-row"><span class="store-name">分组 ${index + 1}</span> <span class="store-items">· ${escapeHtml(items)}</span></div>`;
+function parseQuantity(value) {
+  const text = String(value ?? "").replace(",", "").trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
+
+function editableOrderRows(batch, batchIndex) {
+  const items = batch.items || [];
+  if (!items.length) return `<div class="store-row"><span class="store-items">没有可确认的数据</span></div>`;
+  const rows = items
+    .map((item, itemIndex) => {
+      const product = item.product || item.name || "";
+      const quantity = item.quantity ?? item.qty ?? "";
+      return `
+        <div class="edit-row" data-edit-batch="${batchIndex}" data-edit-index="${itemIndex}">
+          <input class="edit-product" data-edit-product value="${escapeHtml(product)}" aria-label="产品" />
+          <input class="edit-quantity" data-edit-quantity inputmode="decimal" value="${escapeHtml(quantity)}" aria-label="数量" />
+          <span class="edit-unit">${escapeHtml(item.unit || "")}</span>
+        </div>
+      `;
     })
     .join("");
+  return `
+    <div class="edit-table">
+      <div class="edit-head"><span>产品</span><span>数量</span><span>单位</span></div>
+      ${rows}
+    </div>
+  `;
 }
 
 function itemRows(items) {
@@ -174,13 +193,48 @@ function clearOrderBatch(mode) {
   }
 }
 
-function selectOrderBatch(container, batch, mode, button = null) {
-  if (!batch) return;
+function collectEditedOrderItems(container, batch, batchIndex) {
+  const rows = $$(`[data-edit-batch="${batchIndex}"]`, container);
+  if (!rows.length) return batch.items || [];
+  return rows
+    .map((row) => {
+      const index = Number(row.dataset.editIndex);
+      const original = (batch.items || [])[index] || {};
+      const product = row.querySelector("[data-edit-product]")?.value.trim() || "";
+      const quantity = parseQuantity(row.querySelector("[data-edit-quantity]")?.value);
+      const originalProduct = String(original.product || original.name || "").trim();
+      const next = {
+        ...original,
+        product,
+        name: product,
+        quantity,
+        qty: quantity,
+      };
+      if (product && originalProduct && product !== originalProduct) {
+        next.code = "";
+        next.spec = "";
+        next.category = "";
+        next.price = null;
+      }
+      return next;
+    })
+    .filter((item) => item.product && item.quantity !== null);
+}
+
+function applyOrderBatch(container, batch, mode, batchIndex) {
+  const items = collectEditedOrderItems(container, batch, batchIndex);
   if (mode === "production") {
-    productionBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
+    productionBatch = { items, ids: batch.ids || [], orderDate: batch.order_date || "" };
   } else {
-    shipmentBatch = { items: batch.items || [], ids: batch.ids || [], orderDate: batch.order_date || "" };
+    shipmentBatch = { items, ids: batch.ids || [], orderDate: batch.order_date || "" };
   }
+}
+
+function selectOrderBatch(container, batch, mode, button = null, batchIndex = 0) {
+  if (!batch) return;
+  applyOrderBatch(container, batch, mode, batchIndex);
+  container.dataset.selectedBatchIndex = String(batchIndex);
+  container.dataset.selectedOrderMode = mode;
   $$("[data-accept-order-batch]", container).forEach((item) => {
     item.disabled = false;
     item.textContent = "确认此批";
@@ -189,6 +243,15 @@ function selectOrderBatch(container, batch, mode, button = null) {
     button.disabled = true;
     button.textContent = "已确认";
   }
+}
+
+function updateSelectedOrderBatch(container) {
+  if (!container?.dataset.selectedBatchIndex) return;
+  const batches = JSON.parse(container.dataset.payload || "[]");
+  const batchIndex = Number(container.dataset.selectedBatchIndex);
+  const batch = batches[batchIndex];
+  if (!batch) return;
+  applyOrderBatch(container, batch, container.dataset.selectedOrderMode || "production", batchIndex);
 }
 
 function renderOrderBatches(target, data, mode) {
@@ -212,7 +275,7 @@ function renderOrderBatches(target, data, mode) {
       const counts = batch.counts || {};
       return `
         <div class="ct">下单日期 ${escapeHtml(batch.order_date || "未填写")} · ${counts.orders || 0} 单 · ${counts.stores || 0} 组 · ${counts.items || 0} 行</div>
-        ${storeRows(batch.grouped || [])}
+        ${editableOrderRows(batch, index)}
         <div class="confirm-btns">
           <button class="mini ok" data-accept-order-batch="${mode}" data-batch-index="${index}" ${batch.order_date ? "" : "disabled"}>确认此批</button>
         </div>
@@ -224,7 +287,7 @@ function renderOrderBatches(target, data, mode) {
   target.innerHTML = html;
   if (batches.length === 1 && batches[0].order_date) {
     const autoButton = target.querySelector("[data-accept-order-batch]");
-    selectOrderBatch(target, batches[0], mode, autoButton);
+    selectOrderBatch(target, batches[0], mode, autoButton, 0);
   }
 }
 
@@ -403,6 +466,11 @@ document.addEventListener("change", async (event) => {
   }
 });
 
+document.addEventListener("input", (event) => {
+  if (!event.target.closest("[data-edit-product], [data-edit-quantity]")) return;
+  updateSelectedOrderBatch(event.target.closest(".ai-confirm"));
+});
+
 document.addEventListener("click", async (event) => {
   const resetSlot = event.target.closest("[data-reset-slot]");
   const acceptBatch = event.target.closest("[data-accept-order-batch]");
@@ -416,8 +484,9 @@ document.addEventListener("click", async (event) => {
   } else if (acceptBatch) {
     const container = acceptBatch.closest(".ai-confirm");
     const batches = JSON.parse(container.dataset.payload || "[]");
-    const batch = batches[Number(acceptBatch.dataset.batchIndex)];
-    selectOrderBatch(container, batch, acceptBatch.dataset.acceptOrderBatch, acceptBatch);
+    const batchIndex = Number(acceptBatch.dataset.batchIndex);
+    const batch = batches[batchIndex];
+    selectOrderBatch(container, batch, acceptBatch.dataset.acceptOrderBatch, acceptBatch, batchIndex);
   } else if (event.target.closest("#acceptReceiptSync")) {
     const container = $("#receiptSyncResult");
     const payload = JSON.parse(container.dataset.payload || "{}");
