@@ -267,6 +267,31 @@ function invalidateOrderModulesAfterRollback(sourceMode, count) {
   });
 }
 
+async function syncOrderModule(mode, noticeText = "正在同步订单库...") {
+  const isShipment = mode === "shipment";
+  const target = isShipment ? $("#shipmentSyncResult") : $("#orderSyncResult");
+  const dateSelector = isShipment ? "#dateModule4" : "#dateModule1";
+  const status = isShipment ? "all" : "new";
+  target.classList.remove("hidden");
+  target.innerHTML = `<div class="notice">${escapeHtml(noticeText)}</div>`;
+  const data = await request(`/api/robot/orders/fetch?status=${status}&order_date=${encodeURIComponent(selectedDate(dateSelector))}`);
+  renderOrderBatches(target, data, mode);
+}
+
+async function refreshOrderModuleAfterRollback(mode) {
+  const target = mode === "shipment" ? $("#shipmentSyncResult") : $("#orderSyncResult");
+  try {
+    await syncOrderModule(mode, "退回成功，正在重新同步订单库...");
+  } catch (error) {
+    target.classList.remove("hidden");
+    target.innerHTML = `<div class="notice">退回成功，但重新同步失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function refreshOrderModulesAfterRollback() {
+  await Promise.all([refreshOrderModuleAfterRollback("production"), refreshOrderModuleAfterRollback("shipment")]);
+}
+
 function orderDateLabel(mode, fallbackDate = "") {
   if (fallbackDate) return fallbackDate;
   if (mode === "shipment") return shipmentBatch.orderDate || selectedDate("#dateModule4");
@@ -436,16 +461,17 @@ document.addEventListener("click", async (event) => {
         const succeeded = data.robot_unmark?.succeeded || [];
         if (failed.length) {
           result.innerHTML += `<div class="notice">部分订单退回失败：${failed.map(escapeHtml).join("、")}。成功退回：${succeeded.map(escapeHtml).join("、") || "无"}。</div>`;
-          return;
+          return { ok: false };
         }
-        invalidateOrderModulesAfterRollback(mode, succeeded.length || ids.length);
-        return { ok: true };
+        return { ok: true, count: succeeded.length || ids.length };
       } catch (error) {
         result.innerHTML += `<div class="notice">${escapeHtml(error.message)}</div>`;
         return { ok: false };
       }
     });
     if (outcome?.ok) {
+      invalidateOrderModulesAfterRollback(mode, outcome.count);
+      await refreshOrderModulesAfterRollback();
       $$("[data-return-robot-orders]").forEach((button) => {
         button.disabled = true;
         button.textContent = "已退回，请重新同步";
@@ -490,13 +516,10 @@ $("#refreshState").addEventListener("click", loadState);
 
 $("#syncOrders").addEventListener("click", async (event) => {
   await runOnce(event.currentTarget, `正在同步...`, async () => {
-    const target = $("#orderSyncResult");
-    target.classList.remove("hidden");
-    target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
     try {
-      const data = await request(`/api/robot/orders/fetch?status=new&order_date=${encodeURIComponent(selectedDate("#dateModule1"))}`);
-      renderOrderBatches(target, data, "production");
+      await syncOrderModule("production");
     } catch (error) {
+      const target = $("#orderSyncResult");
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }
   });
@@ -518,13 +541,10 @@ $("#syncReceipts").addEventListener("click", async (event) => {
 
 $("#syncShipment").addEventListener("click", async (event) => {
   await runOnce(event.currentTarget, `正在同步...`, async () => {
-    const target = $("#shipmentSyncResult");
-    target.classList.remove("hidden");
-    target.innerHTML = `<div class="notice">正在同步订单库...</div>`;
     try {
-      const data = await request(`/api/robot/orders/fetch?status=all&order_date=${encodeURIComponent(selectedDate("#dateModule4"))}`);
-      renderOrderBatches(target, data, "shipment");
+      await syncOrderModule("shipment");
     } catch (error) {
+      const target = $("#shipmentSyncResult");
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }
   });
