@@ -386,4 +386,4 @@ app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
+    return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-store"})
