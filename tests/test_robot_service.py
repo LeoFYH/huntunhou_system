@@ -271,6 +271,7 @@ def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> N
         ws = wb.active
         ws.title = "鼓楼"
         ws["A1"] = "馄饨侯（鼓楼）店产品订货单"
+        ws.merge_cells("A1:H1")
         ws["A2"] = "订货日期："
         ws["D2"] = "6/27/2026"
         ws["H2"] = "订货人："
@@ -289,12 +290,12 @@ def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> N
             confirmed_items=[
                 {
                     "store": "鼓楼",
-                    "category": "馄饨",
-                    "code": "05020094",
+                    "category": "机器人分类不覆盖模板",
+                    "code": "BAD-CODE",
                     "product": "鸡汤虾肉馄饨",
-                    "spec": "500g/袋*12袋",
-                    "unit": "箱",
-                    "price": 399.11,
+                    "spec": "机器人规格不覆盖模板",
+                    "unit": "袋",
+                    "price": 999.99,
                     "quantity": 3,
                 },
                 {
@@ -315,8 +316,10 @@ def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> N
         assert warnings == []
         wb = load_workbook(output, data_only=True)
         ws = wb.active
-        assert ws["A1"].value == "鼓楼发货单"
+        assert ws["A1"].value == "馄饨侯（鼓楼）店产品发货单"
+        assert "A1:H1" in [str(item) for item in ws.merged_cells.ranges]
         assert [ws.cell(4, col).value for col in range(1, 9)] == ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"]
+        assert [ws.cell(5, col).value for col in range(1, 9)] == [1, "馄饨", "05020093", "鸡汤鲜肉馄饨", "260g/袋*25袋", "箱", 267.32, None]
         assert [ws.cell(6, col).value for col in range(1, 9)] == [2, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
         assert [ws.cell(7, col).value for col in range(1, 9)] == [3, "新品", "NEW01", "新增测试品", "1kg", "袋", 12.5, 2]
 

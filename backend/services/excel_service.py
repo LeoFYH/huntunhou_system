@@ -624,18 +624,53 @@ def _best_order_sheet(path: Path):
 
 
 def update_store_header(ws, store: str) -> None:
-    title = f"{store}发货单"
+    fallback_title = f"{store}发货单"
     for row in range(1, min(6, ws.max_row) + 1):
         for col in range(1, ws.max_column + 1):
             value = ws.cell(row, col).value
             if isinstance(value, str) and any(token in value for token in ("馄饨侯", "发货", "出库", "店")):
-                ws.cell(row, col).value = title
+                title = value.replace("产品订货单", "产品发货单").replace("订货单", "发货单").replace("出库单", "发货单")
+                ws.cell(row, col).value = title if title != value or "发货单" in title else fallback_title
                 return
-    ws["A1"].value = title
+    ws["A1"].value = fallback_title
 
 
 def _shipment_key(product: Any) -> str:
     return normalize_key(product)
+
+
+def _shipment_match_keys(item: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    code_key = normalize_key(item.get("code"))
+    if code_key:
+        keys.append(f"code:{code_key}")
+    product_key = normalize_key(item.get("product") or item.get("name"))
+    if product_key:
+        keys.append(f"product:{product_key}")
+    return keys
+
+
+def _shipment_row_match_keys(ws, row: int, columns: dict[str, int]) -> list[str]:
+    keys: list[str] = []
+    code_col = columns.get("code")
+    if code_col:
+        code_key = normalize_key(ws.cell(row, code_col).value)
+        if code_key:
+            keys.append(f"code:{code_key}")
+    product_col = columns.get("product")
+    if product_col:
+        product_key = normalize_key(ws.cell(row, product_col).value)
+        if product_key:
+            keys.append(f"product:{product_key}")
+    return keys
+
+
+def _shipment_item_lookup(products: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for item in products.values():
+        for key in _shipment_match_keys(item):
+            lookup.setdefault(key, item)
+    return lookup
 
 
 def _merge_shipment_item(
@@ -685,6 +720,12 @@ def _write_shipment_item_to_row(ws, row: int, columns: dict[str, int], item: dic
         col = columns.get(key)
         if col:
             ws.cell(row, col).value = value
+
+
+def _write_shipment_quantity_to_row(ws, row: int, columns: dict[str, int], item: dict[str, Any]) -> None:
+    qty_col = columns.get("order_qty")
+    if qty_col:
+        ws.cell(row, qty_col).value = display_number(item.get("quantity"))
 
 
 def _append_shipment_item(ws, table: TableMap, item: dict[str, Any], sequence: int) -> None:
@@ -758,25 +799,28 @@ def generate_shipment_outputs(
             ws.title = store[:31]
             update_store_header(ws, store)
             qty_col = table.columns.get("order_qty")
-            product_col = table.columns["product"]
             sequence_col = table.columns.get("sequence")
-            seen_keys: set[str] = set()
+            lookup = _shipment_item_lookup(products)
+            seen_items: set[int] = set()
             max_sequence = 0
             if qty_col:
                 for r in range(table.data_start, last_nonempty_row(ws) + 1):
-                    product_key = normalize_key(ws.cell(r, product_col).value)
                     if sequence_col:
                         seq = to_number(ws.cell(r, sequence_col).value)
                         if seq is not None:
                             max_sequence = max(max_sequence, int(seq))
-                    item = products.get(product_key)
+                    item = None
+                    for key in _shipment_row_match_keys(ws, r, table.columns):
+                        item = lookup.get(key)
+                        if item:
+                            break
                     if item:
-                        seen_keys.add(product_key)
-                        _write_shipment_item_to_row(ws, r, table.columns, item)
+                        seen_items.add(id(item))
+                        _write_shipment_quantity_to_row(ws, r, table.columns, item)
                     else:
                         ws.cell(r, qty_col).value = None
-            for item_key, item in products.items():
-                if item_key in seen_keys:
+            for item in products.values():
+                if id(item) in seen_items:
                     continue
                 max_sequence += 1
                 _append_shipment_item(ws, table, item, max_sequence)
