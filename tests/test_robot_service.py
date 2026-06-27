@@ -510,3 +510,21 @@ def test_mark_robot_receipts_skips_empty_ids() -> None:
 
 def test_unmark_robot_receipts_skips_empty_ids() -> None:
     assert asyncio.run(robot_service.unmark_robot_receipts([])) == {"skipped": True, "ids": []}
+
+
+def test_hard_clear_buttons_and_robot_endpoints_are_wired() -> None:
+    index = Path("web/index.html").read_text(encoding="utf-8")
+    app_js = Path("web/app.js").read_text(encoding="utf-8")
+    main = Path("backend/main.py").read_text(encoding="utf-8")
+    robot = Path("backend/services/robot_service.py").read_text(encoding="utf-8")
+
+    assert 'data-hard-clear="orders" data-hard-clear-mode="production"' in index
+    assert 'data-hard-clear="receipts" data-hard-clear-mode="receipt"' in index
+    assert 'data-hard-clear="orders" data-hard-clear-mode="shipment"' in index
+    assert "confirmHardClear" in app_js
+    assert '"/api/robot/orders/clear-date"' in app_js
+    assert '"/api/robot/receipts/clear-date"' in app_js
+    assert '@app.post("/api/robot/orders/clear-date")' in main
+    assert '@app.post("/api/robot/receipts/clear-date")' in main
+    assert "/api/orders/clear_by_date" in robot
+    assert "/api/receipts/clear_by_date" in robot

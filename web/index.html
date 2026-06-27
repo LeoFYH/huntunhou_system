@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>订单工具</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260627-order-grid" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260627-hard-clear" />
   </head>
   <body>
     <main class="wrap">
@@ -61,6 +61,7 @@
             <div class="block">
               <p class="block-label">从订单库同步</p>
               <button class="sync" id="syncOrders">同步订单库 <span class="ai-tag">AI</span></button>
+              <button class="danger-clear" data-hard-clear="orders" data-hard-clear-mode="production" data-date-selector="#dateModule1">清空当日单据</button>
               <div class="ai-confirm hidden" id="orderSyncResult"></div>
             </div>
             <button class="gen" id="generateProduction">生成待补充排产表</button>
@@ -163,6 +164,7 @@
           <div class="block">
             <p class="block-label">从产成品库存同步</p>
             <button class="sync" id="syncReceipts">同步入库数据 <span class="ai-tag">AI</span></button>
+            <button class="danger-clear" data-hard-clear="receipts" data-hard-clear-mode="receipt" data-date-selector="#dateModule3">清空当日单据</button>
             <div class="ai-confirm hidden" id="receiptSyncResult"></div>
           </div>
 
@@ -195,6 +197,7 @@
           <div class="block">
             <p class="block-label">从订单库同步（发货=订单）</p>
             <button class="sync" id="syncShipment">同步订单库 <span class="ai-tag">AI</span></button>
+            <button class="danger-clear" data-hard-clear="orders" data-hard-clear-mode="shipment" data-date-selector="#dateModule4">清空当日单据</button>
             <div class="ai-confirm hidden" id="shipmentSyncResult"></div>
           </div>
 
@@ -205,6 +208,6 @@
 
       <p class="note">模板不点“换新的/重置”就一直保存。订单、入库、发货都从机器人同步，确认后再生成。</p>
     </main>
-    <script src="/assets/app.js?v=20260627-order-grid"></script>
+    <script src="/assets/app.js?v=20260627-hard-clear"></script>
   </body>
 </html>

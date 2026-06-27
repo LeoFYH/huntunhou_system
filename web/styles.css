@@ -327,6 +327,24 @@ label.t-reset,
   background: #4a5d78;
 }
 
+.danger-clear {
+  width: 100%;
+  border: 1px solid #ead0b2;
+  border-radius: 9px;
+  background: #fff8ed;
+  color: #9a5a22;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 9px;
+  padding: 9px 12px;
+}
+
+.danger-clear:hover {
+  background: #f8ecd2;
+  color: #7d3f13;
+}
+
 .ai-tag {
   display: inline-flex;
   background: var(--ai-soft);

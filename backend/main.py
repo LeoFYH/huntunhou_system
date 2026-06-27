@@ -23,6 +23,8 @@ from .services.excel_service import (
     summarize_recipe_tables,
 )
 from .services.robot_service import (
+    clear_robot_orders_by_date,
+    clear_robot_receipts_by_date,
     fetch_robot_orders,
     fetch_robot_receipts,
     import_robot_products,
@@ -69,6 +71,14 @@ class GeneratePayload(BaseModel):
 
 class RobotRetryPayload(BaseModel):
     ids: list[Any] | None = None
+
+
+class ClearOrdersPayload(BaseModel):
+    order_date: str
+
+
+class ClearReceiptsPayload(BaseModel):
+    date: str
 
 
 class ReceiptPayload(BaseModel):
@@ -198,6 +208,37 @@ async def robot_unmark_receipts(payload: RobotRetryPayload) -> dict[str, Any]:
     if failed:
         warnings.append(f"入库数据有 {len(failed)} 个 id 退回失败：{failed}")
     return {"robot_receipt_unmark": result, "warnings": warnings}
+
+
+def _cleared_ids(result: dict[str, Any]) -> list[Any]:
+    for key in ("ids", "deleted_ids", "cleared_ids", "succeeded"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+@app.post("/api/robot/orders/clear-date")
+async def robot_clear_orders_by_date(payload: ClearOrdersPayload) -> dict[str, Any]:
+    order_date = _parse_order_date(payload.order_date).isoformat()
+    try:
+        result = await clear_robot_orders_by_date(order_date)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    ids = _cleared_ids(result)
+    if ids:
+        clear_robot_mark_failures(ids)
+    return {"robot_clear": result, "state": public_state()}
+
+
+@app.post("/api/robot/receipts/clear-date")
+async def robot_clear_receipts_by_date(payload: ClearReceiptsPayload) -> dict[str, Any]:
+    receipt_date = _parse_order_date(payload.date).isoformat()
+    try:
+        result = await clear_robot_receipts_by_date(receipt_date)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"robot_clear": result, "state": public_state()}
 
 
 async def _import_receipt_template_skus() -> dict[str, Any]:

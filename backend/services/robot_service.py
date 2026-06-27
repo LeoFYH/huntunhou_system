@@ -458,3 +458,43 @@ async def unmark_robot_receipts(ids: list[Any]) -> dict[str, Any]:
     result.setdefault("failed", [])
     result["ok"] = not result["failed"]
     return result
+
+
+async def clear_robot_orders_by_date(order_date: str) -> dict[str, Any]:
+    if not order_date:
+        raise RuntimeError("缺少 order_date，无法清空订单。")
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE，无法清空订单库。")
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{ROBOT_API_BASE}/api/orders/clear_by_date",
+            json={"order_date": order_date},
+            headers=_robot_headers(),
+        )
+        if response.status_code == 404:
+            raise RuntimeError("机器人接口未部署：POST /api/orders/clear_by_date。请先更新 bot 后再清空。")
+        response.raise_for_status()
+    result = response.json() if response.content else {}
+    result.setdefault("order_date", order_date)
+    result.setdefault("ok", True)
+    return result
+
+
+async def clear_robot_receipts_by_date(receipt_date: str) -> dict[str, Any]:
+    if not receipt_date:
+        raise RuntimeError("缺少 date，无法清空入库数据。")
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE，无法清空入库库。")
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{ROBOT_API_BASE}/api/receipts/clear_by_date",
+            json={"date": receipt_date},
+            headers=_robot_headers(),
+        )
+        if response.status_code == 404:
+            raise RuntimeError("机器人接口未部署：POST /api/receipts/clear_by_date。请先更新 bot 后再清空。")
+        response.raise_for_status()
+    result = response.json() if response.content else {}
+    result.setdefault("date", receipt_date)
+    result.setdefault("ok", True)
+    return result

@@ -289,6 +289,58 @@ function clearOrderSyncResult(mode) {
   delete target.dataset.selectedOrderMode;
 }
 
+function clearReceiptSyncResult() {
+  receiptBatch = { items: [], ids: [], date: "" };
+  const target = $("#receiptSyncResult");
+  if (!target) return;
+  target.classList.add("hidden");
+  target.innerHTML = "";
+  delete target.dataset.payload;
+}
+
+function confirmHardClear(kind, dateValue) {
+  const source = kind === "receipts" ? "产成品入库库" : "订单库";
+  const moduleText = kind === "receipts" ? "模块3" : "模块1/模块4";
+  const first = window.confirm(`强力清空会彻底删除 ${dateValue} 的${source}数据，并清掉${moduleText}当前页面同步结果。删除后工具里将再也同步不到这些单据。确定继续吗？`);
+  if (!first) return false;
+  return window.confirm(`二次确认：这不是普通清空页面，会删除 bot 数据库里的 ${dateValue} 当日单据。只有在当天数据彻底乱掉、准备人工统计时才点“确定”。`);
+}
+
+function robotClearCount(result) {
+  const value = result?.deleted ?? result?.deleted_count ?? result?.cleared ?? result?.count ?? result?.total;
+  if (value !== undefined && value !== null) return value;
+  for (const key of ["ids", "deleted_ids", "cleared_ids", "succeeded"]) {
+    if (Array.isArray(result?.[key])) return result[key].length;
+  }
+  return null;
+}
+
+function hardClearMessage(kind, dateValue, data) {
+  const result = data.robot_clear || {};
+  const count = robotClearCount(result);
+  const source = kind === "receipts" ? "入库数据" : "订单单据";
+  const countText = count === null ? "" : `，共 ${escapeHtml(count)} 条`;
+  return `${escapeHtml(dateValue)} 当日${source}已强力清空${countText}。当前页面同步结果已清掉；如需恢复只能重新让机器人入库/接单。`;
+}
+
+function applyHardClearUi(kind, mode, dateValue, data) {
+  if (data.state) {
+    appState = data.state;
+    renderState();
+  }
+  const message = hardClearMessage(kind, dateValue, data);
+  if (kind === "receipts") {
+    clearReceiptSyncResult();
+    $("#receiptResult").innerHTML = `<div class="download"><span>${message}</span></div>`;
+    return;
+  }
+  clearOrderSyncResult("production");
+  clearOrderSyncResult("shipment");
+  const notice = `<div class="download"><span>${message}</span></div>`;
+  $("#productionResult").innerHTML = notice;
+  $("#shipmentResult").innerHTML = notice;
+}
+
 function collectEditedOrderItems(container, batch, batchIndex) {
   const rows = $$(`[data-edit-batch="${batchIndex}"]`, container);
   if (!rows.length) return batch.items || [];
@@ -576,10 +628,31 @@ document.addEventListener("click", async (event) => {
   const resetSlot = event.target.closest("[data-reset-slot]");
   const acceptBatch = event.target.closest("[data-accept-order-batch]");
   const clearOrderSync = event.target.closest("[data-clear-order-sync]");
+  const hardClear = event.target.closest("[data-hard-clear]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
   const returnRobotOrders = event.target.closest("[data-return-robot-orders]");
   const returnRobotReceipts = event.target.closest("[data-return-robot-receipts]");
-  if (resetSlot) {
+  if (hardClear) {
+    const kind = hardClear.dataset.hardClear || "orders";
+    const mode = hardClear.dataset.hardClearMode || "production";
+    const dateSelector = hardClear.dataset.dateSelector;
+    const dateValue = selectedDate(dateSelector);
+    const resultTarget = mode === "receipt" ? $("#receiptResult") : mode === "shipment" ? $("#shipmentResult") : $("#productionResult");
+    if (!confirmHardClear(kind, dateValue)) return;
+    await runOnce(hardClear, "正在强力清空...", async () => {
+      try {
+        const endpoint = kind === "receipts" ? "/api/robot/receipts/clear-date" : "/api/robot/orders/clear-date";
+        const body = kind === "receipts" ? { date: dateValue } : { order_date: dateValue };
+        const data = await request(endpoint, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        applyHardClearUi(kind, mode, dateValue, data);
+      } catch (error) {
+        resultTarget.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+      }
+    });
+  } else if (resetSlot) {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
     appState = data.state;
     renderState();
