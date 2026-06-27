@@ -203,16 +203,32 @@ function itemRows(items) {
     .join("");
 }
 
-function renderRejected(rejectedPatches) {
+function renderClearOrderSyncButton(mode) {
+  return `
+    <div class="sync-clear-bar">
+      <button class="mini" data-clear-order-sync="${escapeHtml(mode)}">清空当前同步结果</button>
+      <span>只清空本页面未确认内容；订单库里的加货/订单不会被删除，下次同步仍会出现。</span>
+    </div>
+  `;
+}
+
+function renderRejected(rejectedPatches, mode) {
   if (!rejectedPatches?.length) return "";
   const rows = rejectedPatches
     .map((patch, index) => {
       const content = (patch.items || []).map((item) => item.label || `${item.name} ${item.qty || ""}${item.unit || ""}`).join("、");
       const dateLabel = patch.order_date ? `${patch.order_date} · ` : "";
-      return `<li>${escapeHtml(dateLabel)}分组 ${index + 1}：${escapeHtml(content || "未填写商品")}</li>`;
+      const storeLabel = patch.store ? `${patch.store}：` : `分组 ${index + 1}：`;
+      return `<li>${escapeHtml(dateLabel)}${escapeHtml(storeLabel)}${escapeHtml(content || "未填写商品")}</li>`;
     })
     .join("");
-  return `<div class="notice">以下加货找不到同下单日期、同分组主订单，请先处理：<ul>${rows}</ul></div>`;
+  return `
+    <div class="notice">
+      以下是加货补丁，但当前没有同下单日期、同门店主订单，不能生成排产表：
+      <ul>${rows}</ul>
+      <div>处理方式：先让对应主订单进入订单库后重新同步；或者点下面清空，只是这次先不处理它，不会删除 bot 库里的加货。</div>
+    </div>
+  `;
 }
 
 function emptyOrderBatch() {
@@ -225,6 +241,17 @@ function clearOrderBatch(mode) {
   } else {
     shipmentBatch = emptyOrderBatch();
   }
+}
+
+function clearOrderSyncResult(mode) {
+  clearOrderBatch(mode);
+  const target = mode === "shipment" ? $("#shipmentSyncResult") : $("#orderSyncResult");
+  if (!target) return;
+  target.classList.add("hidden");
+  target.innerHTML = "";
+  delete target.dataset.payload;
+  delete target.dataset.selectedBatchIndex;
+  delete target.dataset.selectedOrderMode;
 }
 
 function collectEditedOrderItems(container, batch, batchIndex) {
@@ -295,10 +322,10 @@ function renderOrderBatches(target, data, mode) {
   (data.warnings || []).forEach((warning) => {
     html += `<div class="notice">${escapeHtml(warning)}</div>`;
   });
-  html += renderRejected(data.rejected_patches || []);
+  html += renderRejected(data.rejected_patches || [], mode);
   if (!batches.length) {
     target.classList.remove("hidden");
-    target.innerHTML = `${html}<div class="notice">没有可确认的数据。</div>`;
+    target.innerHTML = `${html}<div class="notice">没有可确认的数据。</div>${renderClearOrderSyncButton(mode)}`;
     return;
   }
   if (batches.length > 1) {
@@ -316,6 +343,7 @@ function renderOrderBatches(target, data, mode) {
       `;
     })
     .join("");
+  html += renderClearOrderSyncButton(mode);
   target.dataset.payload = JSON.stringify(batches);
   target.classList.remove("hidden");
   target.innerHTML = html;
@@ -508,6 +536,7 @@ document.addEventListener("input", (event) => {
 document.addEventListener("click", async (event) => {
   const resetSlot = event.target.closest("[data-reset-slot]");
   const acceptBatch = event.target.closest("[data-accept-order-batch]");
+  const clearOrderSync = event.target.closest("[data-clear-order-sync]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
   const returnRobotOrders = event.target.closest("[data-return-robot-orders]");
   const returnRobotReceipts = event.target.closest("[data-return-robot-receipts]");
@@ -519,6 +548,8 @@ document.addEventListener("click", async (event) => {
       $("#receiptSkuImportStatus")?.classList.add("hidden");
       if ($("#receiptSkuImportStatus")) $("#receiptSkuImportStatus").innerHTML = "";
     }
+  } else if (clearOrderSync) {
+    clearOrderSyncResult(clearOrderSync.dataset.clearOrderSync || "production");
   } else if (acceptBatch) {
     const container = acceptBatch.closest(".ai-confirm");
     const batches = JSON.parse(container.dataset.payload || "[]");
