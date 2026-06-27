@@ -32,7 +32,7 @@ uvicorn backend.main:app --reload
 DEEPSEEK_API_KEY=你的 key
 DEEPSEEK_API_BASE=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
-ROBOT_API_BASE=http://127.0.0.1:9000
+ROBOT_API_BASE=http://foodwechatbot:9000
 ROBOT_API_TOKEN=机器人共享 token
 ```
 
