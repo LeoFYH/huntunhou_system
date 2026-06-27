@@ -4,7 +4,15 @@ import pytest
 
 from openpyxl import Workbook
 
-from backend.services.excel_service import aggregate_orders, parse_recipe_table, parse_rows, recipe_required_qty, safety_stock_map, summarize_recipe_tables
+from backend.services.excel_service import (
+    aggregate_orders,
+    extract_receipt_template_skus,
+    parse_recipe_table,
+    parse_rows,
+    recipe_required_qty,
+    safety_stock_map,
+    summarize_recipe_tables,
+)
 
 
 def save_order(path: Path) -> None:
@@ -43,6 +51,28 @@ def test_safety_stock_map(tmp_path: Path) -> None:
     save_safety(safety)
     values = safety_stock_map(safety)
     assert next(iter(values.values())) == 60
+
+
+def test_extract_receipt_template_skus_dedupes_and_drops_transaction_fields(tmp_path: Path) -> None:
+    path = tmp_path / "receipt_template.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["存货编码", "存货名称", "规格型号", "主计量", "数量", "单价", "金额", "批号", "生产日期"])
+    ws.append(["05020122", "鸡蛋面", "", "斤", 10, 2.5, 25, "B1", "2026-06-27"])
+    ws.append(["05020122", "鸡蛋面", "", "斤", 30, 2.5, 75, "B2", "2026-06-27"])
+    ws.append(["050200014", "麻酱烧饼", "65g*1", "个", 50, 1.6, 80, "B3", "2026-06-27"])
+    wb.save(path)
+
+    result = extract_receipt_template_skus(path)
+
+    assert result["source_rows"] == 3
+    assert result["unique_rows"] == 2
+    assert result["deduped"] == 1
+    assert result["products"] == [
+        {"name": "鸡蛋面", "spec": "", "unit": "斤", "category": ""},
+        {"name": "麻酱烧饼", "spec": "65g*1", "unit": "个", "category": ""},
+    ]
+    assert all(set(item) == {"name", "spec", "unit", "category"} for item in result["products"])
 
 
 def test_parse_feed_sheet_recipe(tmp_path: Path) -> None:

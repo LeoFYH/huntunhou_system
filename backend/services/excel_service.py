@@ -335,6 +335,39 @@ def product_catalog(paths: list[Path]) -> dict[str, dict[str, Any]]:
     return catalog
 
 
+def extract_receipt_template_skus(path: Path, limit: int = 1000) -> dict[str, Any]:
+    seen: set[tuple[str, str, str, str]] = set()
+    products: list[dict[str, str]] = []
+    source_rows = 0
+    unique_rows = 0
+    for row in parse_rows(path, "receipt"):
+        name = str(row.get("product") or "").strip()
+        if not name:
+            continue
+        source_rows += 1
+        item = {
+            "name": name,
+            "spec": str(row.get("spec") or "").strip(),
+            "unit": str(row.get("unit") or "").strip(),
+            "category": str(row.get("category") or "").strip(),
+        }
+        key = tuple(normalize_text(item[field]) for field in ("name", "spec", "unit", "category"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_rows += 1
+        if len(products) < limit:
+            products.append(item)
+    return {
+        "products": products,
+        "source_rows": source_rows,
+        "unique_rows": unique_rows,
+        "deduped": max(source_rows - unique_rows, 0),
+        "truncated": max(unique_rows - len(products), 0),
+        "limit": limit,
+    }
+
+
 def copy_row_format(ws, src_row: int, dst_row: int, max_col: int) -> None:
     for col in range(1, max_col + 1):
         src = ws.cell(src_row, col)

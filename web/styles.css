@@ -557,6 +557,68 @@ label.t-reset,
   font-weight: 700;
 }
 
+.sku-import-status {
+  margin-top: 10px;
+}
+
+.sku-ok,
+.sku-fail {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.sku-ok {
+  background: #edf6e8;
+  border: 1px solid #d4e7c8;
+  color: var(--green);
+}
+
+.sku-fail {
+  background: var(--warn-soft);
+  border: 1px solid #f0e2c4;
+  color: var(--warn);
+}
+
+.sku-title {
+  font-weight: 800;
+}
+
+.sku-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.sku-counts span {
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.sku-details {
+  margin-top: 8px;
+}
+
+.sku-details summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.sku-details ul {
+  max-height: 180px;
+  overflow: auto;
+  margin: 7px 0 0;
+  padding-left: 18px;
+}
+
+.sku-details li span {
+  color: var(--muted);
+  margin-left: 6px;
+}
+
 .hidden {
   display: none;
 }

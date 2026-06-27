@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .config import WEB_DIR
 from .services.ai_service import parse_text_with_deepseek
 from .services.excel_service import (
+    extract_receipt_template_skus,
     generate_completed_production_workbook,
     generate_material_issue_workbook,
     generate_production_workbook,
@@ -24,6 +25,7 @@ from .services.excel_service import (
 from .services.robot_service import (
     fetch_robot_orders,
     fetch_robot_receipts,
+    import_robot_products,
     mark_robot_orders_fetched,
     mark_robot_receipts_fetched,
     unmark_robot_orders,
@@ -198,12 +200,88 @@ async def robot_unmark_receipts(payload: RobotRetryPayload) -> dict[str, Any]:
     return {"robot_receipt_unmark": result, "warnings": warnings}
 
 
+async def _import_receipt_template_skus() -> dict[str, Any]:
+    path = slot_path("receipt_template")
+    if not path:
+        return {
+            "ok": False,
+            "skipped": True,
+            "error": "模板已保存，但没有找到可解析的入库单模板文件。",
+            "products": [],
+        }
+    try:
+        extracted = extract_receipt_template_skus(path)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "stage": "parse",
+            "error": f"模板已保存，但 SKU 解析失败：{exc}",
+            "products": [],
+        }
+
+    products = extracted.get("products", [])
+    base = {
+        "source_rows": extracted.get("source_rows", 0),
+        "unique_rows": extracted.get("unique_rows", 0),
+        "deduped": extracted.get("deduped", 0),
+        "truncated": extracted.get("truncated", 0),
+        "limit": extracted.get("limit", 1000),
+        "products": products,
+    }
+    if not products:
+        return {
+            **base,
+            "ok": False,
+            "skipped": True,
+            "error": "模板已保存，但没有识别到可导入的 SKU。",
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "merged_in_batch": 0,
+            "results": [],
+        }
+
+    try:
+        result = await import_robot_products(products)
+    except Exception as exc:
+        return {
+            **base,
+            "ok": False,
+            "stage": "bot_import",
+            "error": f"模板已保存，但 SKU 导入机器人失败：{exc}",
+            "total": len(products),
+            "succeeded": 0,
+            "failed": len(products),
+            "merged_in_batch": 0,
+            "results": [],
+        }
+
+    failed = int(result.get("failed") or 0)
+    return {
+        **base,
+        "ok": failed == 0,
+        "total": result.get("total", len(products)),
+        "succeeded": result.get("succeeded", 0),
+        "failed": failed,
+        "merged_in_batch": result.get("merged_in_batch", 0),
+        "results": result.get("results", []),
+    }
+
+
 @app.post("/api/upload/{slot}")
 async def upload(slot: str, files: list[UploadFile] = File(...)) -> dict[str, Any]:
     saved = []
     for item in files:
         saved.append(await save_upload(slot, item))
-    return {"slot": slot, "files": saved, "state": public_state()}
+    response = {"slot": slot, "files": saved, "state": public_state()}
+    if slot == "receipt_template":
+        response["sku_import"] = await _import_receipt_template_skus()
+    return response
+
+
+@app.post("/api/receipt-template/import-skus")
+async def import_receipt_template_skus() -> dict[str, Any]:
+    return {"sku_import": await _import_receipt_template_skus(), "state": public_state()}
 
 
 @app.post("/api/text/{slot}")

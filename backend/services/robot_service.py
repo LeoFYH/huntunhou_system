@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
 from ..config import ROBOT_API_BASE, ROBOT_API_TIMEOUT_SECONDS, ROBOT_API_TOKEN
 from .excel_service import normalize_key, to_number
+
+
+logger = logging.getLogger("huntunhou.robot_service")
 
 
 def _robot_headers() -> dict[str, str]:
@@ -332,6 +336,36 @@ async def fetch_robot_receipts(receipt_date: str | None = None) -> dict[str, Any
         )
         response.raise_for_status()
     return normalize_robot_receipts(response.json())
+
+
+async def import_robot_products(products: list[dict[str, str]]) -> dict[str, Any]:
+    if not products:
+        return {
+            "skipped": True,
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "merged_in_batch": 0,
+            "results": [],
+        }
+    if not ROBOT_API_BASE:
+        raise RuntimeError("未配置 ROBOT_API_BASE，无法导入 SKU。")
+    payload = {"products": products}
+    logger.info("robot_products_import_request %s", payload)
+    async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{ROBOT_API_BASE}/api/products/import",
+            json=payload,
+            headers=_robot_headers(),
+        )
+        response.raise_for_status()
+    result = response.json()
+    result.setdefault("total", len(products))
+    result.setdefault("succeeded", 0)
+    result.setdefault("failed", 0)
+    result.setdefault("merged_in_batch", 0)
+    result.setdefault("results", [])
+    return result
 
 
 async def mark_robot_orders_fetched(ids: list[Any]) -> dict[str, Any]:

@@ -108,6 +108,39 @@ async function refreshRecipePreview() {
   target.textContent = `已识别 ${preview.file_count} 个文件、${preview.product_count} 个成品、${preview.recipe_rows} 条配料`;
 }
 
+function renderSkuImportStatus(result) {
+  const target = $("#receiptSkuImportStatus");
+  if (!target || !result) return;
+  const products = result.products || [];
+  const productRows = products
+    .map((item) => {
+      const meta = [item.spec, item.unit, item.category].filter(Boolean).join(" · ");
+      return `<li><b>${escapeHtml(item.name || "")}</b>${meta ? `<span>${escapeHtml(meta)}</span>` : ""}</li>`;
+    })
+    .join("");
+  const detail = products.length
+    ? `<details class="sku-details" open><summary>查看导入 SKU（${products.length} 个）</summary><ul>${productRows}</ul></details>`
+    : "";
+  const counts = [
+    `解析行 ${result.source_rows ?? 0}`,
+    `去重后 ${result.unique_rows ?? result.total ?? 0}`,
+    `成功 ${result.succeeded ?? 0}`,
+    `失败 ${result.failed ?? 0}`,
+    `批内合并 ${result.merged_in_batch ?? 0}`,
+  ];
+  if (result.deduped) counts.push(`去重 ${result.deduped}`);
+  if (result.truncated) counts.push(`截断 ${result.truncated}`);
+  const title = result.ok ? "SKU 已导入机器人库" : (result.error || "模板已保存，但 SKU 导入失败");
+  target.classList.remove("hidden");
+  target.innerHTML = `
+    <div class="${result.ok ? "sku-ok" : "sku-fail"}">
+      <div class="sku-title">${escapeHtml(title)}</div>
+      <div class="sku-counts">${counts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+      ${detail}
+    </div>
+  `;
+}
+
 function renderState() {
   renderTemplateFiles();
   renderStoredRobotFailures();
@@ -126,6 +159,7 @@ async function uploadFiles(slot, files) {
   const data = await request(`/api/upload/${slot}`, { method: "POST", body: form });
   appState = data.state;
   renderState();
+  if (slot === "receipt_template") renderSkuImportStatus(data.sku_import);
 }
 
 function parseQuantity(value) {
@@ -481,6 +515,10 @@ document.addEventListener("click", async (event) => {
     const data = await request(`/api/reset/${resetSlot.dataset.resetSlot}`, { method: "DELETE" });
     appState = data.state;
     renderState();
+    if (resetSlot.dataset.resetSlot === "receipt_template") {
+      $("#receiptSkuImportStatus")?.classList.add("hidden");
+      if ($("#receiptSkuImportStatus")) $("#receiptSkuImportStatus").innerHTML = "";
+    }
   } else if (acceptBatch) {
     const container = acceptBatch.closest(".ai-confirm");
     const batches = JSON.parse(container.dataset.payload || "[]");
