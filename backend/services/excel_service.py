@@ -634,6 +634,68 @@ def update_store_header(ws, store: str) -> None:
     ws["A1"].value = title
 
 
+def _shipment_key(product: Any) -> str:
+    return normalize_key(product)
+
+
+def _merge_shipment_item(
+    store_items: dict[str, dict[str, Any]],
+    item: dict[str, Any],
+    quantity_value: Any,
+) -> None:
+    product = str(item.get("product") or item.get("name") or "").strip()
+    qty = to_number(quantity_value)
+    if not product or qty is None:
+        return
+    key = _shipment_key(product)
+    current = store_items.setdefault(
+        key,
+        {
+            "product": product,
+            "category": "",
+            "code": "",
+            "spec": "",
+            "unit": "",
+            "price": None,
+            "quantity": 0.0,
+        },
+    )
+    current["quantity"] += float(qty)
+    for field in ("category", "code", "spec", "unit"):
+        if not current.get(field) and item.get(field) not in (None, ""):
+            current[field] = str(item.get(field)).strip()
+    price = to_number(item.get("price"))
+    if current.get("price") is None and price is not None:
+        current["price"] = price
+
+
+def _write_shipment_item_to_row(ws, row: int, columns: dict[str, int], item: dict[str, Any], sequence: int | None = None) -> None:
+    values = {
+        "category": item.get("category", ""),
+        "code": item.get("code", ""),
+        "product": item.get("product", ""),
+        "spec": item.get("spec", ""),
+        "unit": item.get("unit", ""),
+        "price": display_number(item.get("price")),
+        "order_qty": display_number(item.get("quantity")),
+    }
+    if sequence is not None:
+        values["sequence"] = sequence
+    for key, value in values.items():
+        col = columns.get(key)
+        if col:
+            ws.cell(row, col).value = value
+
+
+def _append_shipment_item(ws, table: TableMap, item: dict[str, Any], sequence: int) -> None:
+    dst_row = last_nonempty_row(ws) + 1
+    src_row = max(table.data_start, dst_row - 1)
+    copy_row_format(ws, src_row, dst_row, ws.max_column)
+    if ws.row_dimensions[src_row].height:
+        ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
+    _write_shipment_item_to_row(ws, dst_row, table.columns, item, sequence)
+
+
 def generate_shipment_outputs(
     order_paths: list[Path],
     template_path: Path | None,
@@ -643,7 +705,7 @@ def generate_shipment_outputs(
 ) -> tuple[Path, list[str]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
-    store_products: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    store_products: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     store_template: dict[str, Path] = {}
 
     for path in order_paths:
@@ -651,16 +713,14 @@ def generate_shipment_outputs(
             qty = row.get("order_qty")
             if qty is None or qty == 0:
                 continue
-            store_products[row["store"]][row["product_key"]] += float(qty)
+            _merge_shipment_item(store_products[row["store"]], row, qty)
             store_template.setdefault(row["store"], path)
 
     for item in confirmed_items or []:
         store = str(item.get("store") or "").strip()
-        product = str(item.get("product") or item.get("name") or "").strip()
-        qty = to_number(item.get("quantity"))
-        if not store or not product or qty is None:
+        if not store:
             continue
-        store_products[store][normalize_key(product)] += float(qty)
+        _merge_shipment_item(store_products[store], item, item.get("quantity"))
 
     if not store_products:
         warnings.append("没有可生成发货单的订货数量或确认发货文本。")
@@ -673,9 +733,20 @@ def generate_shipment_outputs(
         if not template:
             wb = Workbook()
             ws = wb.active
-            write_basic_headers(ws, f"{store}发货单", ["序号", "原料名称", "规格", "单位", "订货数量"])
-            for idx, (key, qty) in enumerate(products.items(), 1):
-                ws.append([idx, key, "", "", display_number(qty)])
+            write_basic_headers(ws, f"{store}发货单", ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"])
+            for idx, item in enumerate(products.values(), 1):
+                ws.append(
+                    [
+                        idx,
+                        item.get("category", ""),
+                        item.get("code", ""),
+                        item.get("product", ""),
+                        item.get("spec", ""),
+                        item.get("unit", ""),
+                        display_number(item.get("price")),
+                        display_number(item.get("quantity")),
+                    ]
+                )
         else:
             wb, ws, table = _best_order_sheet(template)
             if not ws or not table:
@@ -688,10 +759,27 @@ def generate_shipment_outputs(
             update_store_header(ws, store)
             qty_col = table.columns.get("order_qty")
             product_col = table.columns["product"]
+            sequence_col = table.columns.get("sequence")
+            seen_keys: set[str] = set()
+            max_sequence = 0
             if qty_col:
                 for r in range(table.data_start, last_nonempty_row(ws) + 1):
                     product_key = normalize_key(ws.cell(r, product_col).value)
-                    ws.cell(r, qty_col).value = display_number(products.get(product_key, 0.0)) or None
+                    if sequence_col:
+                        seq = to_number(ws.cell(r, sequence_col).value)
+                        if seq is not None:
+                            max_sequence = max(max_sequence, int(seq))
+                    item = products.get(product_key)
+                    if item:
+                        seen_keys.add(product_key)
+                        _write_shipment_item_to_row(ws, r, table.columns, item)
+                    else:
+                        ws.cell(r, qty_col).value = None
+            for item_key, item in products.items():
+                if item_key in seen_keys:
+                    continue
+                max_sequence += 1
+                _append_shipment_item(ws, table, item, max_sequence)
         safe_store = re.sub(r"[^\w\u4e00-\u9fff]+", "_", store).strip("_") or "门店"
         output = output_dir / f"{safe_store}_发货单_{output_date}.xlsx"
         wb.save(output)
@@ -699,7 +787,7 @@ def generate_shipment_outputs(
 
     if len(generated) == 1:
         return generated[0], warnings
-    zip_path = output_dir / f"发货单_{today}.zip"
+    zip_path = output_dir / f"发货单_{output_date}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in generated:
             archive.write(path, path.name)

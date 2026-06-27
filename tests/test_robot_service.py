@@ -6,7 +6,12 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from backend.services import robot_service
-from backend.services.excel_service import generate_completed_production_workbook, generate_material_issue_workbook, generate_production_workbook
+from backend.services.excel_service import (
+    generate_completed_production_workbook,
+    generate_material_issue_workbook,
+    generate_production_workbook,
+    generate_shipment_outputs,
+)
 from backend.services import robot_marking
 from backend.services.robot_service import normalize_robot_orders, normalize_robot_receipts
 
@@ -256,6 +261,64 @@ def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
         assert ws["K4"].value == 3
         assert ws["L4"].value is None
         assert ws["M4"].value == "=I4"
+
+
+def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        template_path = tmp_dir / "order_template.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "鼓楼"
+        ws["A1"] = "馄饨侯（鼓楼）店产品订货单"
+        ws["A2"] = "订货日期："
+        ws["D2"] = "6/27/2026"
+        ws["H2"] = "订货人："
+        ws["I2"] = "周凯"
+        ws["A3"] = "到货日期："
+        ws["H3"] = "联系电话："
+        ws["I3"] = "18301369030"
+        ws.append(["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"])
+        ws.append([1, "馄饨", "05020093", "鸡汤鲜肉馄饨", "260g/袋*25袋", "箱", 267.32, None])
+        ws.append([2, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, None])
+        wb.save(template_path)
+
+        output, warnings = generate_shipment_outputs(
+            order_paths=[],
+            template_path=template_path,
+            confirmed_items=[
+                {
+                    "store": "鼓楼",
+                    "category": "馄饨",
+                    "code": "05020094",
+                    "product": "鸡汤虾肉馄饨",
+                    "spec": "500g/袋*12袋",
+                    "unit": "箱",
+                    "price": 399.11,
+                    "quantity": 3,
+                },
+                {
+                    "store": "鼓楼",
+                    "category": "新品",
+                    "code": "NEW01",
+                    "product": "新增测试品",
+                    "spec": "1kg",
+                    "unit": "袋",
+                    "price": 12.5,
+                    "quantity": 2,
+                },
+            ],
+            order_date=date(2026, 6, 27),
+            output_dir=tmp_dir,
+        )
+
+        assert warnings == []
+        wb = load_workbook(output, data_only=True)
+        ws = wb.active
+        assert ws["A1"].value == "鼓楼发货单"
+        assert [ws.cell(4, col).value for col in range(1, 9)] == ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"]
+        assert [ws.cell(6, col).value for col in range(1, 9)] == [2, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
+        assert [ws.cell(7, col).value for col in range(1, 9)] == [3, "新品", "NEW01", "新增测试品", "1kg", "袋", 12.5, 2]
 
 
 def test_generate_completed_production_workbook_calculates_theory_stock() -> None:
