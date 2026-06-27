@@ -64,6 +64,13 @@ def display_number(value: float | None) -> float | int | None:
     return int(value) if float(value).is_integer() else round(float(value), 4)
 
 
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return ""
+
+
 def last_nonempty_row(ws) -> int:
     rows = [row for (row, _col), cell in ws._cells.items() if cell.value not in (None, "")]
     return max(rows, default=1)
@@ -199,6 +206,8 @@ def aggregate_orders(paths: list[Path], confirmed_items: list[dict[str, Any]] | 
             )
             current["quantity"] += float(qty)
             current["stores"][row["store"]] += float(qty)
+            if current.get("price") is None and row.get("price") is not None:
+                current["price"] = row.get("price")
 
     for item in confirmed_items or []:
         product = str(item.get("product") or item.get("name") or "").strip()
@@ -208,6 +217,7 @@ def aggregate_orders(paths: list[Path], confirmed_items: list[dict[str, Any]] | 
         if qty is None or qty == 0:
             continue
         key = normalize_key(product)
+        price = to_number(item.get("price"))
         current = summary.setdefault(
             key,
             {
@@ -216,12 +226,14 @@ def aggregate_orders(paths: list[Path], confirmed_items: list[dict[str, Any]] | 
                 "code": item.get("code", ""),
                 "spec": item.get("spec", ""),
                 "unit": item.get("unit", ""),
-                "price": None,
+                "price": price,
                 "quantity": 0.0,
                 "stores": defaultdict(float),
             },
         )
         current["quantity"] += float(qty)
+        if current.get("price") is None and price is not None:
+            current["price"] = price
         store = str(item.get("store") or "文字加单").strip()
         current["stores"][store] += float(qty)
     return summary
@@ -404,8 +416,9 @@ def generate_production_workbook(
     keys = [key for key, order in orders.items() if order.get("quantity")]
     rows = []
     for idx, key in enumerate(keys, 1):
-        meta = catalog.get(key, orders[key])
-        order_qty = orders.get(key, {}).get("quantity", 0.0)
+        order = orders.get(key, {})
+        meta = catalog.get(key, order)
+        order_qty = order.get("quantity", 0.0)
         code_key = normalize_key(meta.get("code", ""))
         safety = safety_values.get(key)
         if safety is None and code_key:
@@ -413,12 +426,12 @@ def generate_production_workbook(
         rows.append(
             {
                 "sequence": idx,
-                "category": meta.get("category", ""),
-                "code": meta.get("code", ""),
-                "product": meta.get("product", ""),
-                "spec": meta.get("spec", ""),
-                "unit": meta.get("unit", ""),
-                "price": meta.get("price"),
+                "category": first_present(meta.get("category"), order.get("category")),
+                "code": first_present(meta.get("code"), order.get("code")),
+                "product": first_present(meta.get("product"), order.get("product")),
+                "spec": first_present(meta.get("spec"), order.get("spec")),
+                "unit": first_present(meta.get("unit"), order.get("unit")),
+                "price": first_present(order.get("price"), meta.get("price")) or None,
                 "inventory": None,
                 "safety": safety,
                 "inbound": None,

@@ -197,6 +197,31 @@ def test_generate_production_workbook_outputs_only_order_items_from_template() -
         assert products == ["订单商品"]
 
 
+def test_generate_production_workbook_prefers_order_price_when_template_price_is_blank() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        template_path = tmp_dir / "production_template.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws["A1"] = "排产单"
+        ws.append(["序号", "类别", "编码", "商品名称", "规格", "单位", "单价", "盘点库存数", "安全库存数", "入库数", "出库数量", "理论库存数", "排产量"])
+        ws.append([1, "烧饼类", "T1", "萝卜丝烧饼", "65g*1", "个", None, None, None, None, None, None, None])
+        wb.save(template_path)
+
+        output, _warnings = generate_production_workbook(
+            order_paths=[],
+            production_template_path=template_path,
+            safety_stock_path=None,
+            confirmed_items=[{"product": "萝卜丝烧饼", "quantity": 20, "unit": "个", "price": 1.6}],
+            order_date=date(2026, 6, 27),
+            output_dir=tmp_dir,
+        )
+
+        wb = load_workbook(output, data_only=False)
+        ws = wb.active
+        assert ws["G4"].value == 1.6
+
+
 def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
     with TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
