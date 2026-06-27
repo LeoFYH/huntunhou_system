@@ -169,28 +169,63 @@ function parseQuantity(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function groupOrderItemsByStore(items) {
+  const groups = [];
+  const byStore = new Map();
+  items.forEach((item, index) => {
+    const store = String(item.store || "未填写门店").trim() || "未填写门店";
+    if (!byStore.has(store)) {
+      const group = { store, items: [] };
+      byStore.set(store, group);
+      groups.push(group);
+    }
+    byStore.get(store).items.push({ item, index });
+  });
+  return groups;
+}
+
 function editableOrderRows(batch, batchIndex) {
   const items = batch.items || [];
   if (!items.length) return `<div class="store-row"><span class="store-items">没有可确认的数据</span></div>`;
-  const rows = items
-    .map((item, itemIndex) => {
-      const product = item.product || item.name || "";
-      const quantity = item.quantity ?? item.qty ?? "";
+  return groupOrderItemsByStore(items)
+    .map((group, groupIndex) => {
+      const rows = group.items
+        .map(({ item, index }, itemIndex) => {
+          const product = item.product || item.name || "";
+          const quantity = item.quantity ?? item.qty ?? "";
+          const price = item.price ?? "";
+          return `
+            <div class="edit-row" data-edit-batch="${batchIndex}" data-edit-index="${index}">
+              <span class="edit-sequence">${itemIndex + 1}</span>
+              <input data-order-edit-field data-edit-category value="${escapeHtml(item.category || "")}" aria-label="类别" />
+              <input data-order-edit-field data-edit-code value="${escapeHtml(item.code || "")}" aria-label="编码" />
+              <input data-order-edit-field class="edit-product" data-edit-product value="${escapeHtml(product)}" aria-label="原料名称" />
+              <input data-order-edit-field data-edit-spec value="${escapeHtml(item.spec || "")}" aria-label="规格" />
+              <input data-order-edit-field data-edit-unit value="${escapeHtml(item.unit || "")}" aria-label="单位" />
+              <input data-order-edit-field class="edit-price" data-edit-price inputmode="decimal" value="${escapeHtml(price)}" aria-label="单价" />
+              <input data-order-edit-field class="edit-quantity" data-edit-quantity inputmode="decimal" value="${escapeHtml(quantity)}" aria-label="订货数量" />
+            </div>
+          `;
+        })
+        .join("");
       return `
-        <div class="edit-row" data-edit-batch="${batchIndex}" data-edit-index="${itemIndex}">
-          <input class="edit-product" data-edit-product value="${escapeHtml(product)}" aria-label="产品" />
-          <input class="edit-quantity" data-edit-quantity inputmode="decimal" value="${escapeHtml(quantity)}" aria-label="数量" />
-          <span class="edit-unit">${escapeHtml(item.unit || "")}</span>
+        <div class="edit-store-group" data-edit-store-group>
+          <div class="edit-store-bar">
+            <label>门店/分组 <input data-order-edit-field data-edit-store value="${escapeHtml(group.store)}" aria-label="门店/分组" /></label>
+            <span>${group.items.length} 行</span>
+          </div>
+          <div class="edit-table">
+            <div class="edit-sheet">
+              <div class="edit-head">
+                <span>序号</span><span>类别</span><span>编码</span><span>原料名称</span><span>规格</span><span>单位</span><span>单价</span><span>订货数量</span>
+              </div>
+              ${rows}
+            </div>
+          </div>
         </div>
       `;
     })
     .join("");
-  return `
-    <div class="edit-table">
-      <div class="edit-head"><span>产品</span><span>数量</span><span>单位</span></div>
-      ${rows}
-    </div>
-  `;
 }
 
 function itemRows(items) {
@@ -261,23 +296,27 @@ function collectEditedOrderItems(container, batch, batchIndex) {
     .map((row) => {
       const index = Number(row.dataset.editIndex);
       const original = (batch.items || [])[index] || {};
+      const store = row.closest("[data-edit-store-group]")?.querySelector("[data-edit-store]")?.value.trim() || original.store || "未填写门店";
+      const category = row.querySelector("[data-edit-category]")?.value.trim() || "";
+      const code = row.querySelector("[data-edit-code]")?.value.trim() || "";
       const product = row.querySelector("[data-edit-product]")?.value.trim() || "";
+      const spec = row.querySelector("[data-edit-spec]")?.value.trim() || "";
+      const unit = row.querySelector("[data-edit-unit]")?.value.trim() || "";
+      const price = parseQuantity(row.querySelector("[data-edit-price]")?.value);
       const quantity = parseQuantity(row.querySelector("[data-edit-quantity]")?.value);
-      const originalProduct = String(original.product || original.name || "").trim();
-      const next = {
+      return {
         ...original,
+        store,
+        category,
+        code,
         product,
         name: product,
+        spec,
+        unit,
+        price,
         quantity,
         qty: quantity,
       };
-      if (product && originalProduct && product !== originalProduct) {
-        next.code = "";
-        next.spec = "";
-        next.category = "";
-        next.price = null;
-      }
-      return next;
     })
     .filter((item) => item.product && item.quantity !== null);
 }
@@ -529,7 +568,7 @@ document.addEventListener("change", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
-  if (!event.target.closest("[data-edit-product], [data-edit-quantity]")) return;
+  if (!event.target.closest("[data-order-edit-field]")) return;
   updateSelectedOrderBatch(event.target.closest(".ai-confirm"));
 });
 
