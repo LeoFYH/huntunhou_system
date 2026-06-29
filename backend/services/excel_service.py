@@ -803,6 +803,12 @@ def _store_title_name(store: str) -> str:
     return text
 
 
+def _safe_sheet_title(value: Any) -> str:
+    text = re.sub(r"[\[\]:*?/\\]", "_", str(value or "门店")).strip()
+    text = text.strip("'") or "门店"
+    return text[:31]
+
+
 def update_order_header(ws, store: str, order_date: date | None, items: list[dict[str, Any]]) -> None:
     store_name = _store_title_name(store)
     fallback_title = f"馄饨侯（{store_name}）店产品订货单"
@@ -1057,7 +1063,7 @@ def generate_shipment_outputs(
             for other in list(wb.worksheets):
                 if other is not ws:
                     wb.remove(other)
-            ws.title = store[:31]
+            ws.title = _safe_sheet_title(store)
             update_store_header(ws, store)
             qty_col = table.columns.get("order_qty")
             lookup = _shipment_item_lookup(products)
@@ -1144,7 +1150,7 @@ def generate_order_documents(
             for other in list(wb.worksheets):
                 if other is not ws:
                     wb.remove(other)
-            ws.title = store[:31]
+            ws.title = _safe_sheet_title(store)
             update_order_header(ws, store, order_date, list(products.values()))
             qty_col = table.columns.get("order_qty")
             lookup = _shipment_item_lookup(products)
