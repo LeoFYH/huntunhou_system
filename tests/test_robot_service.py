@@ -167,7 +167,7 @@ def test_generate_production_workbook_uses_order_date_for_filename() -> None:
         ws = wb.active
         assert ws["H3"].value is None
         assert ws["K3"].value is None
-        assert ws["L3"].value == "=H3"
+        assert ws["L3"].value is None
 
 
 def test_generate_production_workbook_outputs_only_order_items_from_template() -> None:
@@ -260,7 +260,7 @@ def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
         assert ws["I4"].value == 80
         assert ws["K4"].value == 3
         assert ws["L4"].value is None
-        assert ws["M4"].value == "=I4"
+        assert ws["M4"].value == 80
 
 
 def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> None:
@@ -331,7 +331,7 @@ def test_generate_completed_production_workbook_calculates_theory_stock() -> Non
         wb = Workbook()
         ws = wb.active
         ws.append(["序号", "类别", "编码", "商品名称", "规格", "单位", "单价", "盘点库存数", "安全库存数", "入库数", "出库数量", "理论库存数", "理论排产"])
-        ws.append([1, "馄饨", "T2", "订单商品", "500g", "箱", 9.5, 20, 80, 5, 3, None, "=I2"])
+        ws.append([1, "馄饨", "T2", "订单商品", "500g", "箱", 9.5, 20, 80, 5, 3, None, None])
         wb.save(production_path)
 
         output, warnings = generate_completed_production_workbook(
@@ -345,7 +345,7 @@ def test_generate_completed_production_workbook_calculates_theory_stock() -> Non
         wb = load_workbook(output, data_only=False)
         ws = wb.active
         assert ws["L2"].value == 22
-        assert ws["M2"].value == "=I2"
+        assert ws["M2"].value == 80
 
 
 def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> None:

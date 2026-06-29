@@ -470,7 +470,7 @@ def generate_production_workbook(
                 "inbound": None,
                 "outbound": order_qty,
                 "theory_stock_formula": None,
-                "production": None,
+                "production": safety,
             }
         )
 
@@ -526,7 +526,7 @@ def generate_production_workbook(
                 "inbound": None,
                 "outbound": display_number(item["outbound"]),
                 "theory_stock": None,
-                "production": f"={get_column_letter(cols['safety'])}{r}" if cols.get("safety") else None,
+                "production": display_number(item["production"]),
             }
             for key, value in values.items():
                 col = cols.get(key)
@@ -551,7 +551,7 @@ def generate_production_workbook(
                     None,
                     display_number(item["outbound"]),
                     None,
-                    f"=H{row_index}",
+                    display_number(item["production"]),
                 ]
             )
     output = output_dir / f"排产表_待补充_{workbook_date.isoformat()}.xlsx"
@@ -575,6 +575,8 @@ def generate_completed_production_workbook(
             continue
         cols = table.columns
         theory_col = cols.get("theory_stock")
+        production_col = cols.get("production")
+        safety_col = cols.get("safety")
         inventory_col = cols.get("inventory")
         inbound_col = cols.get("inbound")
         outbound_col = cols.get("outbound")
@@ -585,6 +587,10 @@ def generate_completed_production_workbook(
         for row in range(table.data_start, last_nonempty_row(ws) + 1):
             if not normalize_text(ws.cell(row, product_col).value):
                 continue
+            if production_col and safety_col:
+                safety = to_number(ws.cell(row, safety_col).value)
+                if safety is not None:
+                    ws.cell(row, production_col).value = display_number(safety)
             inventory = to_number(ws.cell(row, inventory_col).value)
             inbound = to_number(ws.cell(row, inbound_col).value)
             outbound = to_number(ws.cell(row, outbound_col).value) if outbound_col else 0.0
