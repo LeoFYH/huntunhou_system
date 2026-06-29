@@ -7,6 +7,8 @@ from openpyxl import Workbook
 from backend.services.excel_service import (
     aggregate_orders,
     extract_receipt_template_skus,
+    normalize_key,
+    parse_stock_owner_table,
     parse_recipe_table,
     parse_rows,
     recipe_required_qty,
@@ -99,3 +101,36 @@ def test_parse_feed_sheet_recipe(tmp_path: Path) -> None:
     assert summary["file_count"] == 1
     assert summary["product_count"] == 1
     assert summary["recipe_rows"] == 1
+
+
+def test_parse_stock_owner_table_reads_legacy_xls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    class FakeSheet:
+        name = "所属库"
+        rows = [
+            ["存货名称", "所属库"],
+            ["面粉", "主食"],
+            ["猪肉馅", "冷藏"],
+        ]
+        nrows = len(rows)
+        ncols = 2
+
+        def cell_value(self, row: int, col: int):
+            return self.rows[row][col]
+
+    class FakeBook:
+        def sheets(self):
+            return [FakeSheet()]
+
+    class FakeXlrd:
+        @staticmethod
+        def open_workbook(_path: str):
+            return FakeBook()
+
+    monkeypatch.setattr("backend.services.excel_service.xlrd", FakeXlrd)
+    path = tmp_path / "owners.xls"
+    path.write_bytes(b"legacy-xls-placeholder")
+
+    owners = parse_stock_owner_table(path)
+
+    assert owners[normalize_key("面粉")] == "主食"
+    assert owners[normalize_key("猪肉馅")] == "冷藏"

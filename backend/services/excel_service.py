@@ -13,6 +13,12 @@ from typing import Any, Iterable
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
+
+try:
+    import xlrd
+except ImportError:  # pragma: no cover - only hit when dependency install is broken
+    xlrd = None
 
 
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
@@ -24,6 +30,10 @@ class TableMap:
     header_row: int
     data_start: int
     columns: dict[str, int]
+
+
+class SpreadsheetReadError(ValueError):
+    pass
 
 
 def normalize_text(value: Any) -> str:
@@ -94,44 +104,101 @@ def _find_col(headers: dict[int, str], keywords: Iterable[str]) -> int | None:
     return None
 
 
+def _table_columns_from_headers(headers: dict[int, str], current_headers: dict[int, str], purpose: str) -> dict[str, int] | None:
+    product = _find_col(current_headers, ["商品名称", "原料名称", "存货名称", "产品名称"])
+    if not product:
+        return None
+
+    columns: dict[str, int] = {"product": product}
+    pairs = {
+        "sequence": ["序号"],
+        "category": ["类别", "备注"],
+        "code": ["存货编码", "产品编码", "编码"],
+        "spec": ["规格型号", "商品规格", "规格"],
+        "unit": ["主计量", "单位"],
+        "price": ["单价"],
+        "order_qty": ["订货数量"],
+        "qty": ["数量"],
+        "safety": ["安全库存数", "安全库存"],
+        "inventory": ["盘点库存数", "盘点库存"],
+        "inbound": ["入库数", "入库"],
+        "outbound": ["出库数量", "出库数", "订货数量"],
+        "theory_stock": ["理论库存数", "理论库存"],
+        "production": ["理论排产", "排产量", "产量"],
+        "warehouse": ["所属库", "库位", "仓库", "库别"],
+    }
+    for key, keywords in pairs.items():
+        col = _find_col(headers, keywords)
+        if col:
+            columns[key] = col
+
+    if purpose == "order" and "order_qty" not in columns and "qty" in columns:
+        columns["order_qty"] = columns["qty"]
+    if purpose == "material" and "qty" not in columns and "order_qty" in columns:
+        columns["qty"] = columns["order_qty"]
+    return columns
+
+
 def detect_table(ws, purpose: str = "generic") -> TableMap | None:
     scan_rows = min(last_nonempty_row(ws), 30)
     for row in range(1, scan_rows + 1):
         current_headers = {col: normalize_text(ws.cell(row, col).value) for col in range(1, ws.max_column + 1)}
         headers = {col: _header_text(ws, row, col) for col in range(1, ws.max_column + 1)}
-        product = _find_col(current_headers, ["商品名称", "原料名称", "存货名称", "产品名称"])
-        if not product:
+        columns = _table_columns_from_headers(headers, current_headers, purpose)
+        if not columns:
             continue
 
-        columns: dict[str, int] = {"product": product}
-        pairs = {
-            "sequence": ["序号"],
-            "category": ["类别", "备注"],
-            "code": ["存货编码", "产品编码", "编码"],
-            "spec": ["规格型号", "商品规格", "规格"],
-            "unit": ["主计量", "单位"],
-            "price": ["单价"],
-            "order_qty": ["订货数量"],
-            "qty": ["数量"],
-            "safety": ["安全库存数", "安全库存"],
-            "inventory": ["盘点库存数", "盘点库存"],
-            "inbound": ["入库数", "入库"],
-            "outbound": ["出库数量", "出库数", "订货数量"],
-            "theory_stock": ["理论库存数", "理论库存"],
-            "production": ["理论排产", "排产量", "产量"],
-            "warehouse": ["所属库", "库位", "仓库", "库别"],
-        }
-        for key, keywords in pairs.items():
-            col = _find_col(headers, keywords)
-            if col:
-                columns[key] = col
-
-        if purpose == "order" and "order_qty" not in columns and "qty" in columns:
-            columns["order_qty"] = columns["qty"]
-        if purpose == "material" and "qty" not in columns and "order_qty" in columns:
-            columns["qty"] = columns["order_qty"]
-
         return TableMap(header_row=row, data_start=row + 1, columns=columns)
+    return None
+
+
+def _is_legacy_xls(path: Path) -> bool:
+    return path.suffix.lower() == ".xls"
+
+
+def _format_xls_value(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _open_xls_workbook(path: Path):
+    if xlrd is None:
+        raise SpreadsheetReadError(f"{path.name} 是老 .xls 格式，当前服务缺少 xlrd 依赖，无法读取。")
+    try:
+        return xlrd.open_workbook(str(path))
+    except Exception as exc:
+        raise SpreadsheetReadError(f"{path.name} 读取失败：{exc}") from exc
+
+
+def _last_nonempty_xls(sheet) -> int:
+    for row_idx in range(sheet.nrows - 1, -1, -1):
+        if any(normalize_text(_format_xls_value(sheet.cell_value(row_idx, col_idx))) for col_idx in range(sheet.ncols)):
+            return row_idx + 1
+    return 0
+
+
+def _header_text_xls(sheet, row: int, col: int) -> str:
+    parts = []
+    for row_idx in (row - 1, row):
+        if 0 <= row_idx < sheet.nrows and 0 <= col - 1 < sheet.ncols:
+            value = _format_xls_value(sheet.cell_value(row_idx, col - 1))
+            if value not in (None, ""):
+                parts.append(str(value))
+    return normalize_text("".join(parts))
+
+
+def _detect_table_xls(sheet, purpose: str = "generic") -> TableMap | None:
+    scan_rows = min(_last_nonempty_xls(sheet), 30)
+    for row in range(1, scan_rows + 1):
+        current_headers = {
+            col: normalize_text(_format_xls_value(sheet.cell_value(row - 1, col - 1)))
+            for col in range(1, sheet.ncols + 1)
+        }
+        headers = {col: _header_text_xls(sheet, row, col) for col in range(1, sheet.ncols + 1)}
+        columns = _table_columns_from_headers(headers, current_headers, purpose)
+        if columns:
+            return TableMap(header_row=row, data_start=row + 1, columns=columns)
     return None
 
 
@@ -150,8 +217,64 @@ def infer_store_name(ws, path: Path) -> str:
     return path.stem
 
 
+def infer_store_name_xls(sheet, path: Path) -> str:
+    for row_idx, col_idx in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        if row_idx >= sheet.nrows or col_idx >= sheet.ncols:
+            continue
+        value = _format_xls_value(sheet.cell_value(row_idx, col_idx))
+        if not value:
+            continue
+        text = str(value)
+        match = re.search(r"馄饨侯[（(]?([^）)店]+)[）)]?店", text)
+        if match:
+            return f"{match.group(1)}店"
+    title = str(sheet.name).replace("订货", "").strip()
+    if title and not title.lower().startswith("sheet"):
+        return title if title.endswith(("店", "学校")) else f"{title}店"
+    return path.stem
+
+
+def parse_rows_xls(path: Path, purpose: str = "generic") -> list[dict[str, Any]]:
+    wb = _open_xls_workbook(path)
+    parsed: list[dict[str, Any]] = []
+    for sheet in wb.sheets():
+        table = _detect_table_xls(sheet, purpose)
+        if not table:
+            continue
+        store = infer_store_name_xls(sheet, path)
+        columns = table.columns
+        product_col = columns["product"]
+        for row in range(table.data_start, _last_nonempty_xls(sheet) + 1):
+            product = _format_xls_value(sheet.cell_value(row - 1, product_col - 1))
+            if not normalize_text(product):
+                continue
+            item: dict[str, Any] = {
+                "product": str(product).strip(),
+                "product_key": normalize_key(product),
+                "store": store,
+                "source": path.name,
+                "row": row,
+            }
+            for key in ("sequence", "category", "code", "spec", "unit", "price", "order_qty", "qty", "safety", "inventory", "inbound", "outbound", "theory_stock", "production", "warehouse"):
+                col = columns.get(key)
+                if not col:
+                    continue
+                value = _format_xls_value(sheet.cell_value(row - 1, col - 1))
+                if key in {"price", "order_qty", "qty", "safety", "inventory", "inbound", "outbound", "theory_stock", "production"}:
+                    item[key] = to_number(value)
+                else:
+                    item[key] = "" if value is None else str(value).strip()
+            parsed.append(item)
+    return parsed
+
+
 def parse_rows(path: Path, purpose: str = "generic") -> list[dict[str, Any]]:
-    wb = load_workbook(path, data_only=True)
+    if _is_legacy_xls(path):
+        return parse_rows_xls(path, purpose)
+    try:
+        wb = load_workbook(path, data_only=True)
+    except InvalidFileException as exc:
+        raise SpreadsheetReadError(f"{path.name} 格式暂不支持。请把文件另存为 .xlsx 后重新上传。") from exc
     parsed: list[dict[str, Any]] = []
     for ws in wb.worksheets:
         table = detect_table(ws, purpose)
@@ -1136,8 +1259,18 @@ def parse_conversion_table(path: Path | None) -> dict[str, float]:
 def parse_stock_owner_table(path: Path | None) -> dict[str, str]:
     if not path:
         return {}
+    if _is_legacy_xls(path):
+        owners: dict[str, str] = {}
+        for row in parse_rows_xls(path, "generic"):
+            warehouse = normalize_text(row.get("warehouse"))
+            if row.get("product_key") and warehouse:
+                owners[row["product_key"]] = warehouse
+        return owners
     owners: dict[str, str] = {}
-    wb = load_workbook(path, data_only=True)
+    try:
+        wb = load_workbook(path, data_only=True)
+    except InvalidFileException as exc:
+        raise SpreadsheetReadError(f"{path.name} 格式暂不支持。请把文件另存为 .xlsx 后重新上传。") from exc
     for ws in wb.worksheets:
         table = detect_table(ws, "generic")
         if not table or "warehouse" not in table.columns:

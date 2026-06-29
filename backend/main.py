@@ -20,6 +20,7 @@ from .services.excel_service import (
     generate_receipt_workbook,
     generate_shipment_outputs,
     parse_rows,
+    SpreadsheetReadError,
     summarize_recipe_tables,
 )
 from .services.robot_service import (
@@ -452,16 +453,19 @@ async def generate_material_upload(
         tmp_dir = Path(tmp)
         production_path = tmp_dir / (production_file.filename or "production.xlsx")
         production_path.write_bytes(await production_file.read())
-        output, missing, warnings = generate_material_issue_workbook(
-            production_path=production_path,
-            recipe_paths=slot_paths("recipe_table"),
-            conversion_path=slot_path("conversion_table"),
-            stock_owner_path=slot_path("stock_owner_table"),
-            material_template_path=slot_path("material_template"),
-            workshop_stock_text="",
-            document_date=_parse_order_date(document_date),
-            output_dir=tmp_dir,
-        )
+        try:
+            output, missing, warnings = generate_material_issue_workbook(
+                production_path=production_path,
+                recipe_paths=slot_paths("recipe_table"),
+                conversion_path=slot_path("conversion_table"),
+                stock_owner_path=slot_path("stock_owner_table"),
+                material_template_path=slot_path("material_template"),
+                workshop_stock_text="",
+                document_date=_parse_order_date(document_date),
+                output_dir=tmp_dir,
+            )
+        except SpreadsheetReadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if missing:
             return {"status": "missing_config", "missing": missing, "warnings": warnings}
         assert output is not None
