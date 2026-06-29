@@ -629,6 +629,35 @@ def _best_order_sheet(path: Path):
     return wb, best_ws, best_table
 
 
+def _best_shipment_sheet(path: Path, store: str, products: dict[str, dict[str, Any]]):
+    wb = load_workbook(path)
+    desired_keys = set()
+    for item in products.values():
+        desired_keys.update(_shipment_match_keys(item))
+    store_key = normalize_key(store)
+    best_ws = None
+    best_table = None
+    best_score = -1
+    for index, ws in enumerate(wb.worksheets):
+        table = detect_table(ws, "order")
+        if not table or "order_qty" not in table.columns:
+            continue
+        score = 0
+        title_key = normalize_key(ws.title)
+        if store_key and store_key in title_key:
+            score += 1000
+        if "code" in table.columns and "warehouse" in table.columns:
+            score += 50
+        for row in range(table.data_start, last_nonempty_row(ws) + 1):
+            row_keys = _shipment_row_match_keys(ws, row, table.columns)
+            if any(key in desired_keys for key in row_keys):
+                score += 10
+        score -= index
+        if score > best_score:
+            best_ws, best_table, best_score = ws, table, score
+    return wb, best_ws, best_table
+
+
 def update_store_header(ws, store: str) -> None:
     fallback_title = f"{store}发货单"
     for row in range(1, min(6, ws.max_row) + 1):
@@ -638,6 +667,9 @@ def update_store_header(ws, store: str) -> None:
                 title = value.replace("产品订货单", "产品发货单").replace("订货单", "发货单").replace("出库单", "发货单")
                 ws.cell(row, col).value = title if title != value or "发货单" in title else fallback_title
                 return
+    table = detect_table(ws, "order")
+    if table and table.header_row <= 2:
+        return
     ws["A1"].value = fallback_title
 
 
@@ -686,7 +718,7 @@ def _merge_shipment_item(
 ) -> None:
     product = str(item.get("product") or item.get("name") or "").strip()
     qty = to_number(quantity_value)
-    if not product or qty is None:
+    if not product or qty is None or qty <= 0:
         return
     key = _shipment_key(product)
     current = store_items.setdefault(
@@ -734,6 +766,24 @@ def _write_shipment_quantity_to_row(ws, row: int, columns: dict[str, int], item:
         ws.cell(row, qty_col).value = display_number(item.get("quantity"))
 
 
+def _write_shipment_matched_row(ws, row: int, columns: dict[str, int], item: dict[str, Any]) -> None:
+    values = {
+        "category": item.get("category", ""),
+        "code": item.get("code", ""),
+        "product": item.get("product", ""),
+        "spec": item.get("spec", ""),
+        "unit": item.get("unit", ""),
+        "price": display_number(item.get("price")),
+    }
+    for key, value in values.items():
+        col = columns.get(key)
+        if not col or value in (None, ""):
+            continue
+        if ws.cell(row, col).value in (None, ""):
+            ws.cell(row, col).value = value
+    _write_shipment_quantity_to_row(ws, row, columns, item)
+
+
 def _append_shipment_item(ws, table: TableMap, item: dict[str, Any], sequence: int) -> None:
     dst_row = last_nonempty_row(ws) + 1
     src_row = max(table.data_start, dst_row - 1)
@@ -741,6 +791,23 @@ def _append_shipment_item(ws, table: TableMap, item: dict[str, Any], sequence: i
     if ws.row_dimensions[src_row].height:
         ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
     _write_shipment_item_to_row(ws, dst_row, table.columns, item, sequence)
+
+
+def _is_shipment_product_row(ws, row: int, columns: dict[str, int]) -> bool:
+    product_col = columns.get("product")
+    return bool(product_col and normalize_text(ws.cell(row, product_col).value))
+
+
+def _renumber_shipment_rows(ws, table: TableMap) -> int:
+    sequence_col = table.columns.get("sequence")
+    if not sequence_col:
+        return 0
+    sequence = 0
+    for row in range(table.data_start, last_nonempty_row(ws) + 1):
+        if _is_shipment_product_row(ws, row, table.columns):
+            sequence += 1
+            ws.cell(row, sequence_col).value = sequence
+    return sequence
 
 
 def generate_shipment_outputs(
@@ -795,7 +862,7 @@ def generate_shipment_outputs(
                     ]
                 )
         else:
-            wb, ws, table = _best_order_sheet(template)
+            wb, ws, table = _best_shipment_sheet(template, store, products)
             if not ws or not table:
                 warnings.append(f"{template.name} 没有识别到订单格式，已跳过。")
                 continue
@@ -805,16 +872,11 @@ def generate_shipment_outputs(
             ws.title = store[:31]
             update_store_header(ws, store)
             qty_col = table.columns.get("order_qty")
-            sequence_col = table.columns.get("sequence")
             lookup = _shipment_item_lookup(products)
             seen_items: set[int] = set()
-            max_sequence = 0
+            rows_to_delete: list[int] = []
             if qty_col:
                 for r in range(table.data_start, last_nonempty_row(ws) + 1):
-                    if sequence_col:
-                        seq = to_number(ws.cell(r, sequence_col).value)
-                        if seq is not None:
-                            max_sequence = max(max_sequence, int(seq))
                     item = None
                     for key in _shipment_row_match_keys(ws, r, table.columns):
                         item = lookup.get(key)
@@ -822,14 +884,20 @@ def generate_shipment_outputs(
                             break
                     if item:
                         seen_items.add(id(item))
-                        _write_shipment_quantity_to_row(ws, r, table.columns, item)
+                        _write_shipment_matched_row(ws, r, table.columns, item)
+                    elif _is_shipment_product_row(ws, r, table.columns):
+                        rows_to_delete.append(r)
                     else:
                         ws.cell(r, qty_col).value = None
+            for row in reversed(rows_to_delete):
+                ws.delete_rows(row)
+            max_sequence = _renumber_shipment_rows(ws, table)
             for item in products.values():
                 if id(item) in seen_items:
                     continue
                 max_sequence += 1
                 _append_shipment_item(ws, table, item, max_sequence)
+            _renumber_shipment_rows(ws, table)
         safe_store = re.sub(r"[^\w\u4e00-\u9fff]+", "_", store).strip("_") or "门店"
         output = output_dir / f"{safe_store}_发货单_{output_date}.xlsx"
         wb.save(output)

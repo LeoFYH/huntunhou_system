@@ -11,6 +11,7 @@ from backend.services.excel_service import (
     generate_material_issue_workbook,
     generate_production_workbook,
     generate_shipment_outputs,
+    last_nonempty_row,
 )
 from backend.services import robot_marking
 from backend.services.robot_service import normalize_robot_orders, normalize_robot_receipts
@@ -319,9 +320,74 @@ def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> N
         assert ws["A1"].value == "馄饨侯（鼓楼）店产品发货单"
         assert "A1:H1" in [str(item) for item in ws.merged_cells.ranges]
         assert [ws.cell(4, col).value for col in range(1, 9)] == ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"]
-        assert [ws.cell(5, col).value for col in range(1, 9)] == [1, "馄饨", "05020093", "鸡汤鲜肉馄饨", "260g/袋*25袋", "箱", 267.32, None]
-        assert [ws.cell(6, col).value for col in range(1, 9)] == [2, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
-        assert [ws.cell(7, col).value for col in range(1, 9)] == [3, "新品", "NEW01", "新增测试品", "1kg", "袋", 12.5, 2]
+        assert [ws.cell(5, col).value for col in range(1, 9)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
+        assert [ws.cell(6, col).value for col in range(1, 9)] == [2, "新品", "NEW01", "新增测试品", "1kg", "袋", 12.5, 2]
+        assert ws.cell(7, 4).value is None
+
+
+def test_generate_shipment_uses_t6_template_sheet_and_filters_zero_rows() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        template_path = tmp_dir / "t6_template.xlsx"
+        headers = ["仓库", "存货编码", "存货名称", "规格型号", "主计量", "数量", "含税单价", "税率（%）", "价税合计", "折扣额", "批号", "生产日期", "保质期", "失效日期"]
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "0617鼓楼"
+        ws.append(headers)
+        ws.append([None, "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 1, None, None, None, None, None, None, None, None])
+        ws.append([None, "050200019", "鸡汤菜肉馄饨", "500g/袋*12袋", "箱", 1, None, None, None, None, None, None, None, None])
+        ws2 = wb.create_sheet("0617地安门")
+        ws2.append(headers)
+        ws2.append([None, "05020093", "鸡汤鲜肉馄饨", "280g/袋*25袋", "箱", 4, None, None, None, None, None, None, None, None])
+        ws2.append([None, "05020108", "鸡汤鲜虾馄饨", "340g/袋*24袋", "箱", 1, None, None, None, None, None, None, None, None])
+        ws2.append([None, "050400059", "鸡棒骨汤", "2kg*1", "袋", 2, None, None, None, None, None, None, None, None])
+        wb.save(template_path)
+
+        output, warnings = generate_shipment_outputs(
+            order_paths=[],
+            template_path=template_path,
+            confirmed_items=[
+                {
+                    "store": "鼓楼",
+                    "code": "05020094",
+                    "product": "鸡汤虾肉馄饨",
+                    "spec": "机器人规格不覆盖模板",
+                    "unit": "袋",
+                    "price": 399.11,
+                    "quantity": 3,
+                },
+                {
+                    "store": "鼓楼",
+                    "code": "ZERO",
+                    "product": "零数量品",
+                    "unit": "箱",
+                    "quantity": 0,
+                },
+                {
+                    "store": "鼓楼",
+                    "code": "NEW01",
+                    "product": "新增品",
+                    "spec": "1kg",
+                    "unit": "袋",
+                    "price": 12.5,
+                    "quantity": 2,
+                },
+            ],
+            order_date=date(2026, 6, 27),
+            output_dir=tmp_dir,
+        )
+
+        assert warnings == []
+        wb = load_workbook(output, data_only=True)
+        ws = wb.active
+        assert ws.title == "鼓楼"
+        assert [ws.cell(1, col).value for col in range(1, 15)] == headers
+        assert [ws.cell(2, col).value for col in range(1, 8)] == [None, "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 3, 399.11]
+        assert [ws.cell(3, col).value for col in range(1, 8)] == [None, "NEW01", "新增品", "1kg", "袋", 2, 12.5]
+        exported_names = [ws.cell(row, 3).value for row in range(2, last_nonempty_row(ws) + 1)]
+        assert "鸡汤菜肉馄饨" not in exported_names
+        assert "鸡汤鲜肉馄饨" not in exported_names
+        assert "零数量品" not in exported_names
 
 
 def test_generate_completed_production_workbook_calculates_theory_stock() -> None:
