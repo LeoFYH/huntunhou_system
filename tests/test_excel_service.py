@@ -8,6 +8,7 @@ from backend.services.excel_service import (
     aggregate_orders,
     extract_receipt_template_skus,
     normalize_key,
+    parse_stock_owner_details,
     parse_stock_owner_table,
     parse_recipe_table,
     parse_rows,
@@ -107,12 +108,12 @@ def test_parse_stock_owner_table_reads_legacy_xls(monkeypatch: pytest.MonkeyPatc
     class FakeSheet:
         name = "所属库"
         rows = [
-            ["存货名称", "所属库"],
-            ["面粉", "主食"],
-            ["猪肉馅", "冷藏"],
+            ["仓库(cWhName)", "存货编码(cInvCode)", "存货名称(cInvName)", "规格型号(cInvStd)", "计量单位(cInvM_Unit)", "本币无税单价(iUnitCost)"],
+            ["主食", "0101", "面粉", "25kg", "袋", 88.5],
+            ["冷藏", "0202", "猪肉馅", "10kg", "斤", 12.25],
         ]
         nrows = len(rows)
-        ncols = 2
+        ncols = 6
 
         def cell_value(self, row: int, col: int):
             return self.rows[row][col]
@@ -130,7 +131,15 @@ def test_parse_stock_owner_table_reads_legacy_xls(monkeypatch: pytest.MonkeyPatc
     path = tmp_path / "owners.xls"
     path.write_bytes(b"legacy-xls-placeholder")
 
+    details = parse_stock_owner_details(path)
     owners = parse_stock_owner_table(path)
 
     assert owners[normalize_key("面粉")] == "主食"
     assert owners[normalize_key("猪肉馅")] == "冷藏"
+    assert details[normalize_key("面粉")] == {
+        "warehouse": "主食",
+        "code": "0101",
+        "spec": "25kg",
+        "unit": "袋",
+        "price": 88.5,
+    }

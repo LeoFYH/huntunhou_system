@@ -116,7 +116,7 @@ def _table_columns_from_headers(headers: dict[int, str], current_headers: dict[i
         "code": ["存货编码", "产品编码", "编码"],
         "spec": ["规格型号", "商品规格", "规格"],
         "unit": ["主计量", "单位"],
-        "price": ["单价"],
+        "price": ["本币无税单价", "无税单价", "含税单价", "单价"],
         "order_qty": ["订货数量"],
         "qty": ["数量"],
         "safety": ["安全库存数", "安全库存"],
@@ -293,7 +293,7 @@ def parse_rows(path: Path, purpose: str = "generic") -> list[dict[str, Any]]:
                 "source": path.name,
                 "row": row,
             }
-            for key in ("sequence", "category", "code", "spec", "unit", "price", "order_qty", "qty", "safety", "inventory", "inbound", "outbound", "theory_stock", "production"):
+            for key in ("sequence", "category", "code", "spec", "unit", "price", "order_qty", "qty", "safety", "inventory", "inbound", "outbound", "theory_stock", "production", "warehouse"):
                 col = columns.get(key)
                 if not col:
                     continue
@@ -1256,33 +1256,40 @@ def parse_conversion_table(path: Path | None) -> dict[str, float]:
     return conversions
 
 
-def parse_stock_owner_table(path: Path | None) -> dict[str, str]:
+def parse_stock_owner_details(path: Path | None) -> dict[str, dict[str, Any]]:
     if not path:
         return {}
-    if _is_legacy_xls(path):
-        owners: dict[str, str] = {}
-        for row in parse_rows_xls(path, "generic"):
-            warehouse = normalize_text(row.get("warehouse"))
-            if row.get("product_key") and warehouse:
-                owners[row["product_key"]] = warehouse
-        return owners
-    owners: dict[str, str] = {}
-    try:
-        wb = load_workbook(path, data_only=True)
-    except InvalidFileException as exc:
-        raise SpreadsheetReadError(f"{path.name} 格式暂不支持。请把文件另存为 .xlsx 后重新上传。") from exc
-    for ws in wb.worksheets:
-        table = detect_table(ws, "generic")
-        if not table or "warehouse" not in table.columns:
+    owners: dict[str, dict[str, Any]] = {}
+    for row in parse_rows(path, "generic"):
+        key = row.get("product_key")
+        if not key:
             continue
-        product_col = table.columns["product"]
-        warehouse_col = table.columns["warehouse"]
-        for row_idx in range(table.data_start, last_nonempty_row(ws) + 1):
-            name = normalize_text(ws.cell(row_idx, product_col).value)
-            warehouse = normalize_text(ws.cell(row_idx, warehouse_col).value)
-            if name and warehouse:
-                owners[normalize_key(name)] = warehouse
+        detail = owners.setdefault(
+            key,
+            {
+                "warehouse": "",
+                "code": "",
+                "spec": "",
+                "unit": "",
+                "price": None,
+            },
+        )
+        for field in ("warehouse", "code", "spec", "unit"):
+            value = normalize_text(row.get(field))
+            if value:
+                detail[field] = value
+        price = row.get("price")
+        if price is not None:
+            detail["price"] = price
     return owners
+
+
+def parse_stock_owner_table(path: Path | None) -> dict[str, str]:
+    return {
+        key: detail["warehouse"]
+        for key, detail in parse_stock_owner_details(path).items()
+        if detail.get("warehouse")
+    }
 
 
 def generate_material_issue_workbook(
@@ -1311,7 +1318,7 @@ def generate_material_issue_workbook(
     production_rows = parse_rows(production_path, "production")
     recipes = parse_recipe_tables(recipe_paths)
     conversions = parse_conversion_table(conversion_path)
-    stock_owners = parse_stock_owner_table(stock_owner_path)
+    stock_owner_details = parse_stock_owner_details(stock_owner_path)
     workshop_stock = parse_workshop_stock(workshop_stock_text)
 
     recipe_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1347,17 +1354,25 @@ def generate_material_issue_workbook(
             issue_qty = math.ceil(need / factor) if factor else need
             if not factor:
                 warnings.append(f"{recipe['raw']} 没有换算规格，按原始用量输出。")
+            owner = stock_owner_details.get(raw_key, {})
+            owner_price = owner.get("price")
             current_item = material_qty.setdefault(
                 raw_key,
                 {
-                    "code": recipe.get("code", ""),
+                    "code": first_present(owner.get("code"), recipe.get("code")),
                     "raw": recipe["raw"],
-                    "spec": recipe.get("spec", ""),
-                    "unit": recipe.get("unit", ""),
-                    "warehouse": stock_owners.get(raw_key, ""),
+                    "spec": first_present(owner.get("spec"), recipe.get("spec")),
+                    "unit": first_present(owner.get("unit"), recipe.get("unit")),
+                    "warehouse": owner.get("warehouse", ""),
+                    "price": owner_price if owner_price is not None else to_number(recipe.get("price")),
                     "qty": 0.0,
                 },
             )
+            for field in ("code", "spec", "unit", "warehouse"):
+                if not current_item.get(field) and owner.get(field):
+                    current_item[field] = owner[field]
+            if current_item.get("price") is None and owner_price is not None:
+                current_item["price"] = owner_price
             if not current_item["warehouse"]:
                 warnings.append(f"{recipe['raw']} 没有在所属库表中找到所属库。")
             current_item["qty"] += issue_qty
@@ -1373,7 +1388,10 @@ def generate_material_issue_workbook(
         if "warehouse" not in cols:
             cols["warehouse"] = max(ws.max_column, max(cols.values(), default=0)) + 1
             ws.cell((table.header_row if table else 1), cols["warehouse"]).value = "所属库"
-        max_col = max(ws.max_column, cols["warehouse"], 14)
+        if "price" not in cols:
+            cols["price"] = max(ws.max_column, max(cols.values(), default=0)) + 1
+            ws.cell((table.header_row if table else 1), cols["price"]).value = "单价"
+        max_col = max(ws.max_column, cols["warehouse"], cols["price"], 14)
         for r in range(data_start, max(last_nonempty_row(ws), data_start + len(material_qty) + 5) + 1):
             copy_row_format(ws, data_start, r, max_col)
             for c in range(1, max_col + 1):
@@ -1387,6 +1405,7 @@ def generate_material_issue_workbook(
                 "unit": item["unit"],
                 "qty": display_number(item["qty"]),
                 "warehouse": item["warehouse"],
+                "price": display_number(item["price"]),
             }.items():
                 col = cols.get(key)
                 if col:
@@ -1394,9 +1413,9 @@ def generate_material_issue_workbook(
     else:
         wb = Workbook()
         ws = wb.active
-        write_basic_headers(ws, "材料出库单", ["存货编码", "存货名称", "规格型号", "主计量", "数量", "所属库"])
+        write_basic_headers(ws, "材料出库单", ["存货编码", "存货名称", "规格型号", "主计量", "数量", "所属库", "单价"])
         for item in material_qty.values():
-            ws.append([item["code"], item["raw"], item["spec"], item["unit"], display_number(item["qty"]), item["warehouse"]])
+            ws.append([item["code"], item["raw"], item["spec"], item["unit"], display_number(item["qty"]), item["warehouse"], display_number(item["price"])])
 
     output = output_dir / f"材料出库单_{today}.xlsx"
     wb.save(output)

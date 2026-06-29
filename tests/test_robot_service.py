@@ -444,8 +444,8 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         owner_path = tmp_dir / "owner.xlsx"
         wb = Workbook()
         ws = wb.active
-        ws.append(["存货名称", "所属库"])
-        ws.append(["猪肉馅", "冷冻"])
+        ws.append(["仓库", "存货编码", "存货名称", "规格型号", "计量单位", "本币无税单价"])
+        ws.append(["冷冻", "0202", "猪肉馅", "10kg", "斤", 12.25])
         wb.save(owner_path)
 
         output, missing, warnings = generate_material_issue_workbook(
@@ -465,7 +465,12 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         wb = load_workbook(output)
         ws = wb.active
         assert ws["F2"].value == "所属库"
+        assert ws["G2"].value == "单价"
+        assert ws["A3"].value == "0202"
+        assert ws["C3"].value == "10kg"
+        assert ws["D3"].value == "斤"
         assert ws["F3"].value == "冷冻"
+        assert ws["G3"].value == 12.25
 
 
 def test_normalize_robot_receipts_summarizes_finished_goods_without_store() -> None:
