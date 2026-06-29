@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>订单工具</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260627-hard-clear" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260630-order-docs" />
   </head>
   <body>
     <main class="wrap">
@@ -118,7 +118,7 @@
               <span class="dot"></span>
               <span class="t-name">所属库表</span>
               <span class="t-meta" data-files="stock_owner_table"></span>
-              <label class="t-reset">换新的<input type="file" data-slot="stock_owner_table" accept=".xlsx,.xls" /></label>
+              <label class="t-reset">换新的<input type="file" multiple data-slot="stock_owner_table" accept=".xlsx,.xls" /></label>
               <button class="t-reset" data-reset-slot="stock_owner_table">重置</button>
             </div>
             <p class="tpl-note">所属库表只用于给原料补“所属库”：成品、冷冻、冷藏、主食等。</p>
@@ -206,8 +206,41 @@
         </div>
       </section>
 
+      <section class="module" id="module5">
+        <div class="m-head">
+          <div class="m-num">5</div>
+          <div>
+            <div class="m-title">生成订单</div>
+            <div class="m-flow">按分组各出一张订货单</div>
+          </div>
+          <label class="m-date">日期 <input type="date" id="dateModule5" data-date /></label>
+        </div>
+        <div class="m-body">
+          <div class="tpl-zone">
+            <div class="tpl-zone-head">订货单模板（存一次长期用）</div>
+            <div class="tpl" data-template="order_template">
+              <span class="dot"></span>
+              <span class="t-name">订货单模板</span>
+              <span class="t-meta" data-files="order_template"></span>
+              <label class="t-reset">换新的<input type="file" data-slot="order_template" accept=".xlsx,.xls" /></label>
+              <button class="t-reset" data-reset-slot="order_template">重置</button>
+            </div>
+            <p class="tpl-note">用于按分组批量生成订货单；只改本次同步确认的数据，不标记订单库状态。</p>
+          </div>
+
+          <div class="block">
+            <p class="block-label">从订单库同步（订单=当天全部已确认数据）</p>
+            <button class="sync" id="syncOrderDocuments">同步订单库 <span class="ai-tag">AI</span></button>
+            <div class="ai-confirm hidden" id="orderDocumentSyncResult"></div>
+          </div>
+
+          <button class="gen" id="generateOrderDocuments">生成订货单（批量）</button>
+          <div class="result" id="orderDocumentResult"></div>
+        </div>
+      </section>
+
       <p class="note">模板不点“换新的/重置”就一直保存。订单、入库、发货都从机器人同步，确认后再生成。</p>
     </main>
-    <script src="/assets/app.js?v=20260627-hard-clear"></script>
+    <script src="/assets/app.js?v=20260630-order-docs"></script>
   </body>
 </html>

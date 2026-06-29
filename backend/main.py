@@ -16,6 +16,7 @@ from .services.excel_service import (
     extract_receipt_template_skus,
     generate_completed_production_workbook,
     generate_material_issue_workbook,
+    generate_order_documents,
     generate_production_workbook,
     generate_receipt_workbook,
     generate_shipment_outputs,
@@ -444,6 +445,23 @@ async def generate_shipment(payload: GeneratePayload) -> dict[str, Any]:
     return {"output": registered, "warnings": warnings, "robot_mark": robot_mark}
 
 
+@app.post("/api/generate/order-documents")
+async def generate_order_documents_endpoint(payload: GeneratePayload) -> dict[str, Any]:
+    order_paths: list[Path] = []
+    if not payload.confirmed_items:
+        raise HTTPException(status_code=400, detail="请先同步订单库并确认一个订货单批次。")
+    with TemporaryDirectory() as tmp:
+        output, warnings = generate_order_documents(
+            order_paths=order_paths,
+            template_path=slot_path("order_template"),
+            confirmed_items=payload.confirmed_items,
+            order_date=_parse_order_date(payload.order_date),
+            output_dir=Path(tmp),
+        )
+        registered = register_output(output, output.name)
+    return {"output": registered, "warnings": warnings}
+
+
 @app.post("/api/generate/material-issue-upload")
 async def generate_material_upload(
     production_file: UploadFile = File(...),
@@ -458,7 +476,7 @@ async def generate_material_upload(
                 production_path=production_path,
                 recipe_paths=slot_paths("recipe_table"),
                 conversion_path=slot_path("conversion_table"),
-                stock_owner_path=slot_path("stock_owner_table"),
+                stock_owner_path=slot_paths("stock_owner_table"),
                 material_template_path=slot_path("material_template"),
                 workshop_stock_text="",
                 document_date=_parse_order_date(document_date),

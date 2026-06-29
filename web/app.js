@@ -5,6 +5,7 @@ let appState = {};
 let productionBatch = { items: [], ids: [], orderDate: "" };
 let receiptBatch = { items: [], ids: [], date: "" };
 let shipmentBatch = { items: [], ids: [], orderDate: "" };
+let orderDocumentBatch = { items: [], ids: [], orderDate: "" };
 
 async function request(path, options = {}) {
   let response;
@@ -273,14 +274,21 @@ function emptyOrderBatch() {
 function clearOrderBatch(mode) {
   if (mode === "production") {
     productionBatch = emptyOrderBatch();
-  } else {
+  } else if (mode === "shipment") {
     shipmentBatch = emptyOrderBatch();
+  } else if (mode === "order_document") {
+    orderDocumentBatch = emptyOrderBatch();
   }
 }
 
 function clearOrderSyncResult(mode) {
   clearOrderBatch(mode);
-  const target = mode === "shipment" ? $("#shipmentSyncResult") : $("#orderSyncResult");
+  const target =
+    mode === "shipment"
+      ? $("#shipmentSyncResult")
+      : mode === "order_document"
+        ? $("#orderDocumentSyncResult")
+        : $("#orderSyncResult");
   if (!target) return;
   target.classList.add("hidden");
   target.innerHTML = "";
@@ -336,9 +344,11 @@ function applyHardClearUi(kind, mode, dateValue, data) {
   }
   clearOrderSyncResult("production");
   clearOrderSyncResult("shipment");
+  clearOrderSyncResult("order_document");
   const notice = `<div class="download"><span>${message}</span></div>`;
   $("#productionResult").innerHTML = notice;
   $("#shipmentResult").innerHTML = notice;
+  if ($("#orderDocumentResult")) $("#orderDocumentResult").innerHTML = notice;
 }
 
 function collectEditedOrderItems(container, batch, batchIndex) {
@@ -377,8 +387,10 @@ function applyOrderBatch(container, batch, mode, batchIndex) {
   const items = collectEditedOrderItems(container, batch, batchIndex);
   if (mode === "production") {
     productionBatch = { items, ids: batch.ids || [], orderDate: batch.order_date || "" };
-  } else {
+  } else if (mode === "shipment") {
     shipmentBatch = { items, ids: batch.ids || [], orderDate: batch.order_date || "" };
+  } else if (mode === "order_document") {
+    orderDocumentBatch = { items, ids: batch.ids || [], orderDate: batch.order_date || "" };
   }
 }
 
@@ -460,23 +472,26 @@ function renderReceiptSync(data) {
 }
 
 function clearOrderSyncResults() {
-  ["#orderSyncResult", "#shipmentSyncResult"].forEach((selector) => {
+  ["#orderSyncResult", "#shipmentSyncResult", "#orderDocumentSyncResult"].forEach((selector) => {
     const target = $(selector);
     if (!target) return;
     target.classList.add("hidden");
     target.innerHTML = "";
     delete target.dataset.payload;
+    delete target.dataset.selectedBatchIndex;
+    delete target.dataset.selectedOrderMode;
   });
 }
 
 function invalidateOrderModulesAfterRollback(sourceMode, count) {
   productionBatch = emptyOrderBatch();
   shipmentBatch = emptyOrderBatch();
+  orderDocumentBatch = emptyOrderBatch();
   clearOrderSyncResults();
   const sourceLabel = sourceMode === "shipment" ? "模块 4 出货" : "模块 1 排产";
   const countText = count ? `${count} 张订单` : "本批订单";
   const message = `${sourceLabel}已退回${countText}为未拉取；模块 1 排产和模块 4 出货都需要重新同步订单库。`;
-  ["#productionResult", "#shipmentResult"].forEach((selector) => {
+  ["#productionResult", "#shipmentResult", "#orderDocumentResult"].forEach((selector) => {
     const target = $(selector);
     if (!target) return;
     target.innerHTML = `<div class="notice">${escapeHtml(message)}</div>`;
@@ -484,10 +499,14 @@ function invalidateOrderModulesAfterRollback(sourceMode, count) {
 }
 
 async function syncOrderModule(mode, noticeText = "正在同步订单库...") {
-  const isShipment = mode === "shipment";
-  const target = isShipment ? $("#shipmentSyncResult") : $("#orderSyncResult");
-  const dateSelector = isShipment ? "#dateModule4" : "#dateModule1";
-  const status = isShipment ? "all" : "new";
+  const target =
+    mode === "shipment"
+      ? $("#shipmentSyncResult")
+      : mode === "order_document"
+        ? $("#orderDocumentSyncResult")
+        : $("#orderSyncResult");
+  const dateSelector = mode === "shipment" ? "#dateModule4" : mode === "order_document" ? "#dateModule5" : "#dateModule1";
+  const status = mode === "production" ? "new" : "all";
   target.classList.remove("hidden");
   target.innerHTML = `<div class="notice">${escapeHtml(noticeText)}</div>`;
   const data = await request(`/api/robot/orders/fetch?status=${status}&order_date=${encodeURIComponent(selectedDate(dateSelector))}`);
@@ -511,6 +530,7 @@ async function refreshOrderModulesAfterRollback() {
 function orderDateLabel(mode, fallbackDate = "") {
   if (fallbackDate) return fallbackDate;
   if (mode === "shipment") return shipmentBatch.orderDate || selectedDate("#dateModule4");
+  if (mode === "order_document") return orderDocumentBatch.orderDate || selectedDate("#dateModule5");
   return productionBatch.orderDate || selectedDate("#dateModule1");
 }
 
@@ -800,6 +820,17 @@ $("#syncShipment").addEventListener("click", async (event) => {
   });
 });
 
+$("#syncOrderDocuments").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在同步...`, async () => {
+    try {
+      await syncOrderModule("order_document");
+    } catch (error) {
+      const target = $("#orderDocumentSyncResult");
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
+});
+
 $("#generateProduction").addEventListener("click", async (event) => {
   await runOnce(event.currentTarget, `正在生成...`, async () => {
     const target = $("#productionResult");
@@ -904,6 +935,30 @@ $("#generateShipment").addEventListener("click", async (event) => {
         }),
       });
       renderDownload(target, data, { mode: "shipment", orderLock });
+    } catch (error) {
+      target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
+    }
+  });
+});
+
+$("#generateOrderDocuments").addEventListener("click", async (event) => {
+  await runOnce(event.currentTarget, `正在生成...`, async () => {
+    const target = $("#orderDocumentResult");
+    if (!orderDocumentBatch.items.length) {
+      target.innerHTML = `<div class="notice">请先同步订单库并确认订货单批次。</div>`;
+      return;
+    }
+    try {
+      const orderDate = orderDocumentBatch.orderDate || selectedDate("#dateModule5");
+      const data = await request("/api/generate/order-documents", {
+        method: "POST",
+        body: JSON.stringify({
+          confirmed_items: orderDocumentBatch.items,
+          robot_order_ids: orderDocumentBatch.ids,
+          order_date: orderDate,
+        }),
+      });
+      renderDownload(target, data, { mode: "order_document" });
     } catch (error) {
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }

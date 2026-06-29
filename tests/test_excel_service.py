@@ -143,3 +143,36 @@ def test_parse_stock_owner_table_reads_legacy_xls(monkeypatch: pytest.MonkeyPatc
         "unit": "袋",
         "price": 88.5,
     }
+
+
+def test_parse_stock_owner_details_reads_multiple_files_and_prefers_completeness(tmp_path: Path) -> None:
+    old_path = tmp_path / "old_owner.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["仓库", "存货名称"])
+    ws.append(["主食", "面粉"])
+    wb.save(old_path)
+
+    new_path = tmp_path / "new_owner.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["仓库", "存货编码", "存货名称", "规格型号", "计量单位", "本币无税单价"])
+    ws.append(["冷冻", "0301", "虾仁", "10kg", "斤", 20])
+    ws7 = wb.create_sheet("Sheet7")
+    ws7.append(["仓库", "存货编码", "存货名称", "规格型号", "计量单位", "本币无税单价"])
+    ws7.append(["调料辅料库", "0101", "面粉", "25kg/袋", "袋", 88.5])
+    wb.save(new_path)
+
+    details = parse_stock_owner_details([old_path, new_path])
+
+    assert details[normalize_key("面粉")] == {
+        "warehouse": "调料辅料库",
+        "code": "0101",
+        "spec": "25kg/袋",
+        "unit": "袋",
+        "price": 88.5,
+    }
+    assert details[normalize_key("虾仁")]["code"] == "0301"
+    assert details[normalize_key("虾仁")]["price"] == 20

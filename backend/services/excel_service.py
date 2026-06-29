@@ -796,6 +796,59 @@ def update_store_header(ws, store: str) -> None:
     ws["A1"].value = fallback_title
 
 
+def _store_title_name(store: str) -> str:
+    text = str(store or "").strip() or "门店"
+    if text.endswith("店"):
+        return text[:-1]
+    return text
+
+
+def update_order_header(ws, store: str, order_date: date | None, items: list[dict[str, Any]]) -> None:
+    store_name = _store_title_name(store)
+    fallback_title = f"馄饨侯（{store_name}）店产品订货单"
+    for row in range(1, min(6, ws.max_row) + 1):
+        for col in range(1, ws.max_column + 1):
+            value = ws.cell(row, col).value
+            if not isinstance(value, str):
+                continue
+            if any(token in value for token in ("馄饨侯", "订货单", "发货单")) and "产品" in value:
+                ws.cell(row, col).value = fallback_title
+                break
+
+    order_date_text = order_date.isoformat() if order_date else ""
+    delivery_date = first_present(*(item.get("deliver_date") for item in items))
+    orderer = first_present(
+        *(item.get(field) for item in items for field in ("orderer", "buyer", "contact_name", "customer"))
+    )
+    phone = first_present(*(item.get(field) for item in items for field in ("phone", "contact_phone", "mobile")))
+
+    label_values = {
+        "订货日期": order_date_text,
+        "到货日期": delivery_date,
+        "订货人": orderer,
+        "联系电话": phone,
+    }
+    for row in range(1, min(6, ws.max_row) + 1):
+        row_values = [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
+        for label, target_value in label_values.items():
+            label_col = None
+            for col, value in enumerate(row_values, 1):
+                if isinstance(value, str) and label in value:
+                    label_col = col
+                    break
+            if not label_col:
+                continue
+            target_col = None
+            for col in range(label_col + 1, ws.max_column + 1):
+                value = ws.cell(row, col).value
+                if value not in (None, "") and not (isinstance(value, str) and any(name in value for name in label_values)):
+                    target_col = col
+                    break
+            if target_col is None:
+                target_col = min(label_col + 1, ws.max_column)
+            ws.cell(row, target_col).value = target_value
+
+
 def _shipment_key(product: Any) -> str:
     return normalize_key(product)
 
@@ -858,6 +911,9 @@ def _merge_shipment_item(
     )
     current["quantity"] += float(qty)
     for field in ("category", "code", "spec", "unit"):
+        if not current.get(field) and item.get(field) not in (None, ""):
+            current[field] = str(item.get(field)).strip()
+    for field in ("deliver_date", "orderer", "buyer", "contact_name", "customer", "phone", "contact_phone", "mobile"):
         if not current.get(field) and item.get(field) not in (None, ""):
             current[field] = str(item.get(field)).strip()
     price = to_number(item.get("price"))
@@ -933,15 +989,10 @@ def _renumber_shipment_rows(ws, table: TableMap) -> int:
     return sequence
 
 
-def generate_shipment_outputs(
+def _collect_store_products(
     order_paths: list[Path],
-    template_path: Path | None,
     confirmed_items: list[dict[str, Any]] | None,
-    order_date: date | None,
-    output_dir: Path,
-) -> tuple[Path, list[str]]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    warnings: list[str] = []
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, Path]]:
     store_products: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     store_template: dict[str, Path] = {}
 
@@ -958,6 +1009,20 @@ def generate_shipment_outputs(
         if not store:
             continue
         _merge_shipment_item(store_products[store], item, item.get("quantity"))
+
+    return store_products, store_template
+
+
+def generate_shipment_outputs(
+    order_paths: list[Path],
+    template_path: Path | None,
+    confirmed_items: list[dict[str, Any]] | None,
+    order_date: date | None,
+    output_dir: Path,
+) -> tuple[Path, list[str]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
+    store_products, store_template = _collect_store_products(order_paths, confirmed_items)
 
     if not store_products:
         warnings.append("没有可生成发货单的订货数量或确认发货文本。")
@@ -1029,6 +1094,93 @@ def generate_shipment_outputs(
     if len(generated) == 1:
         return generated[0], warnings
     zip_path = output_dir / f"发货单_{output_date}.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in generated:
+            archive.write(path, path.name)
+    return zip_path, warnings
+
+
+def generate_order_documents(
+    order_paths: list[Path],
+    template_path: Path | None,
+    confirmed_items: list[dict[str, Any]] | None,
+    order_date: date | None,
+    output_dir: Path,
+) -> tuple[Path, list[str]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
+    store_products, store_template = _collect_store_products(order_paths, confirmed_items)
+
+    if not store_products:
+        warnings.append("没有可生成订货单的订货数量或确认文本。")
+
+    generated: list[Path] = []
+    output_date = (order_date or date.today()).isoformat()
+    first_template = template_path or (order_paths[0] if order_paths else None)
+    for store, products in store_products.items():
+        template = store_template.get(store) or first_template
+        if not template:
+            wb = Workbook()
+            ws = wb.active
+            write_basic_headers(ws, f"馄饨侯（{_store_title_name(store)}）店产品订货单", ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"])
+            for idx, item in enumerate(products.values(), 1):
+                ws.append(
+                    [
+                        idx,
+                        item.get("category", ""),
+                        item.get("code", ""),
+                        item.get("product", ""),
+                        item.get("spec", ""),
+                        item.get("unit", ""),
+                        display_number(item.get("price")),
+                        display_number(item.get("quantity")),
+                    ]
+                )
+        else:
+            wb, ws, table = _best_shipment_sheet(template, store, products)
+            if not ws or not table:
+                warnings.append(f"{template.name} 没有识别到订单格式，已跳过。")
+                continue
+            for other in list(wb.worksheets):
+                if other is not ws:
+                    wb.remove(other)
+            ws.title = store[:31]
+            update_order_header(ws, store, order_date, list(products.values()))
+            qty_col = table.columns.get("order_qty")
+            lookup = _shipment_item_lookup(products)
+            seen_items: set[int] = set()
+            rows_to_delete: list[int] = []
+            if qty_col:
+                for r in range(table.data_start, last_nonempty_row(ws) + 1):
+                    item = None
+                    for key in _shipment_row_match_keys(ws, r, table.columns):
+                        item = lookup.get(key)
+                        if item:
+                            break
+                    if item:
+                        seen_items.add(id(item))
+                        _write_shipment_matched_row(ws, r, table.columns, item)
+                    elif _is_shipment_product_row(ws, r, table.columns):
+                        rows_to_delete.append(r)
+                    else:
+                        ws.cell(r, qty_col).value = None
+            for row in reversed(rows_to_delete):
+                ws.delete_rows(row)
+            max_sequence = _renumber_shipment_rows(ws, table)
+            for item in products.values():
+                if id(item) in seen_items:
+                    continue
+                max_sequence += 1
+                _append_shipment_item(ws, table, item, max_sequence)
+            _renumber_shipment_rows(ws, table)
+        safe_store = re.sub(r"[^\w\u4e00-\u9fff]+", "_", store).strip("_") or "门店"
+        output = output_dir / f"{safe_store}_订货单_{output_date}.xlsx"
+        wb.save(output)
+        generated.append(output)
+
+    if len(generated) == 1:
+        return generated[0], warnings
+    zip_path = output_dir / f"订货单_{output_date}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in generated:
             archive.write(path, path.name)
@@ -1256,35 +1408,52 @@ def parse_conversion_table(path: Path | None) -> dict[str, float]:
     return conversions
 
 
-def parse_stock_owner_details(path: Path | None) -> dict[str, dict[str, Any]]:
-    if not path:
+def _coerce_paths(value: Path | list[Path] | None) -> list[Path]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [path for path in value if path]
+    return [value]
+
+
+def _clean_owner_value(value: Any) -> str:
+    text = normalize_text(value)
+    if text in {"(空白)", "空白", "（空白）"}:
+        return ""
+    return text
+
+
+def _owner_detail_score(detail: dict[str, Any]) -> int:
+    score = sum(1 for field in ("warehouse", "code", "spec", "unit") if detail.get(field))
+    if detail.get("price") is not None:
+        score += 1
+    return score
+
+
+def parse_stock_owner_details(path: Path | list[Path] | None) -> dict[str, dict[str, Any]]:
+    paths = _coerce_paths(path)
+    if not paths:
         return {}
     owners: dict[str, dict[str, Any]] = {}
-    for row in parse_rows(path, "generic"):
-        key = row.get("product_key")
-        if not key:
-            continue
-        detail = owners.setdefault(
-            key,
-            {
-                "warehouse": "",
-                "code": "",
-                "spec": "",
-                "unit": "",
-                "price": None,
-            },
-        )
-        for field in ("warehouse", "code", "spec", "unit"):
-            value = normalize_text(row.get(field))
-            if value:
-                detail[field] = value
-        price = row.get("price")
-        if price is not None:
-            detail["price"] = price
+    for path_item in paths:
+        for row in parse_rows(path_item, "generic"):
+            key = row.get("product_key")
+            if not key:
+                continue
+            detail = {
+                "warehouse": _clean_owner_value(row.get("warehouse")),
+                "code": _clean_owner_value(row.get("code")),
+                "spec": _clean_owner_value(row.get("spec")),
+                "unit": _clean_owner_value(row.get("unit")),
+                "price": row.get("price"),
+            }
+            existing = owners.get(key)
+            if not existing or _owner_detail_score(detail) >= _owner_detail_score(existing):
+                owners[key] = detail
     return owners
 
 
-def parse_stock_owner_table(path: Path | None) -> dict[str, str]:
+def parse_stock_owner_table(path: Path | list[Path] | None) -> dict[str, str]:
     return {
         key: detail["warehouse"]
         for key, detail in parse_stock_owner_details(path).items()
@@ -1292,11 +1461,40 @@ def parse_stock_owner_table(path: Path | None) -> dict[str, str]:
     }
 
 
+def _recipe_candidates_for_product(
+    recipe_by_product: dict[str, list[dict[str, Any]]],
+    product_key: str,
+    product_name: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    exact = recipe_by_product.get(product_key, [])
+    if exact:
+        return exact, None
+
+    matched_keys = [
+        finished_key
+        for finished_key in recipe_by_product
+        if product_key and finished_key and (finished_key in product_key or product_key in finished_key)
+    ]
+    if not matched_keys:
+        return [], None
+
+    matched_names = []
+    for key in matched_keys:
+        first = recipe_by_product[key][0]
+        matched_names.append(str(first.get("finished") or key))
+    if len(matched_keys) > 1:
+        names = "、".join(matched_names)
+        return [], f"{product_name} 模糊匹配到多个投料单：{names}。请确认后调整商品名或配方表。"
+    key = matched_keys[0]
+    matched_name = matched_names[0]
+    return recipe_by_product[key], f"{product_name} 未精确命中投料单，已按模糊匹配使用 {matched_name}。"
+
+
 def generate_material_issue_workbook(
     production_path: Path | None,
     recipe_paths: list[Path],
     conversion_path: Path | None,
-    stock_owner_path: Path | None,
+    stock_owner_path: Path | list[Path] | None,
     material_template_path: Path | None,
     workshop_stock_text: str,
     document_date: date | None,
@@ -1340,9 +1538,12 @@ def generate_material_issue_workbook(
         if current >= float(safety) * 0.5:
             continue
         production_qty = float(row.get("production") or safety)
-        product_recipes = recipe_by_product.get(row["product_key"], [])
+        product_recipes, fuzzy_warning = _recipe_candidates_for_product(recipe_by_product, row["product_key"], row["product"])
+        if fuzzy_warning:
+            warnings.append(fuzzy_warning)
         if not product_recipes:
-            warnings.append(f"{row['product']} 触发领料，但没有找到对应投料单/配方。")
+            if not fuzzy_warning:
+                warnings.append(f"{row['product']} 触发领料，但没有找到对应投料单/配方。")
             continue
         for recipe in product_recipes:
             raw_key = recipe["raw_key"]

@@ -9,6 +9,7 @@ from backend.services import robot_service
 from backend.services.excel_service import (
     generate_completed_production_workbook,
     generate_material_issue_workbook,
+    generate_order_documents,
     generate_production_workbook,
     generate_shipment_outputs,
     last_nonempty_row,
@@ -325,6 +326,63 @@ def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> N
         assert ws.cell(7, 4).value is None
 
 
+def test_generate_order_documents_uses_order_template_title_and_filters_rows() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        template_path = tmp_dir / "order_template.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "鼓楼"
+        ws["A1"] = "馄饨侯（鼓楼）店产品订货单"
+        ws.merge_cells("A1:H1")
+        ws["A2"] = "订货日期："
+        ws["D2"] = "6/27/2026"
+        ws["H2"] = "订货人："
+        ws["I2"] = "周凯"
+        ws["A3"] = "到货日期："
+        ws["H3"] = "联系电话："
+        ws["I3"] = "18301369030"
+        ws.append(["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"])
+        ws.append([1, "馄饨", "05020093", "鸡汤鲜肉馄饨", "260g/袋*25袋", "箱", 267.32, None])
+        ws.append([2, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, None])
+        wb.save(template_path)
+
+        output, warnings = generate_order_documents(
+            order_paths=[],
+            template_path=template_path,
+            confirmed_items=[
+                {
+                    "store": "鼓楼",
+                    "product": "鸡汤虾肉馄饨",
+                    "spec": "机器人规格不覆盖模板",
+                    "unit": "袋",
+                    "price": 999.99,
+                    "quantity": 3,
+                },
+                {
+                    "store": "鼓楼",
+                    "category": "小吃",
+                    "code": "NEW01",
+                    "product": "新增测试品",
+                    "spec": "1kg",
+                    "unit": "袋",
+                    "price": 12.5,
+                    "quantity": 0,
+                },
+            ],
+            order_date=date(2026, 6, 27),
+            output_dir=tmp_dir,
+        )
+
+        assert warnings == []
+        wb = load_workbook(output, data_only=True)
+        ws = wb.active
+        assert ws["A1"].value == "馄饨侯（鼓楼）店产品订货单"
+        assert ws["D2"].value == "2026-06-27"
+        assert [ws.cell(5, col).value for col in range(1, 9)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
+        assert ws.cell(6, 4).value is None
+
+
 def test_generate_shipment_uses_t6_template_sheet_and_filters_zero_rows() -> None:
     with TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -471,6 +529,60 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         assert ws["D3"].value == "斤"
         assert ws["F3"].value == "冷冻"
         assert ws["G3"].value == 12.25
+
+
+def test_generate_material_issue_workbook_fuzzy_matches_finished_recipe() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+
+        production_path = tmp_dir / "production.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["商品名称", "盘点库存数", "安全库存数", "入库数", "出库数量", "排产量"])
+        ws.append(["鸡汤虾肉馄饨", 0, 100, 0, 0, 100])
+        wb.save(production_path)
+
+        recipe_path = tmp_dir / "recipe.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "虾肉馄饨投料单"
+        ws.append(["", "", "", "", "", "", ""])
+        ws.append(["", "原料名称", "单品净重 g", "得率", "", "", ""])
+        ws.append(["", "虾仁", 100, 1, "", "", ""])
+        wb.save(recipe_path)
+
+        conversion_path = tmp_dir / "conversion.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["存货名称", "数量"])
+        ws.append(["虾仁", 2])
+        wb.save(conversion_path)
+
+        owner_path = tmp_dir / "owner.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["仓库", "存货编码", "存货名称", "规格型号", "计量单位", "本币无税单价"])
+        ws.append(["冷冻", "0301", "虾仁", "10kg", "斤", 20])
+        wb.save(owner_path)
+
+        output, missing, warnings = generate_material_issue_workbook(
+            production_path=production_path,
+            recipe_paths=[recipe_path],
+            conversion_path=conversion_path,
+            stock_owner_path=owner_path,
+            material_template_path=None,
+            workshop_stock_text="",
+            document_date=date(2026, 6, 21),
+            output_dir=tmp_dir,
+        )
+
+        assert missing == []
+        assert any("模糊匹配" in warning and "虾肉馄饨" in warning for warning in warnings)
+        assert output is not None
+        wb = load_workbook(output)
+        ws = wb.active
+        assert ws["B3"].value == "虾仁"
+        assert ws["F3"].value == "冷冻"
 
 
 def test_normalize_robot_receipts_summarizes_finished_goods_without_store() -> None:

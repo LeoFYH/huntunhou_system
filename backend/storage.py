@@ -20,6 +20,7 @@ SEEDED_DIR = STORAGE_DIR / "seeded_files"
 
 MULTI_FILE_SLOTS = {
     "recipe_table",
+    "stock_owner_table",
 }
 
 RESIDENT_SLOTS = {
@@ -31,6 +32,7 @@ RESIDENT_SLOTS = {
     "material_template",
     "receipt_template",
     "shipment_template",
+    "order_template",
 }
 
 MODULE_SLOTS = {
@@ -38,6 +40,7 @@ MODULE_SLOTS = {
     "2": [],
     "3": [],
     "4": [],
+    "5": [],
 }
 
 SEED_FILES = {
@@ -45,6 +48,7 @@ SEED_FILES = {
     "material_template": "material_issue_template.xlsx",
     "receipt_template": "finished_goods_receipt_template.xlsx",
     "shipment_template": "order_template.xlsx",
+    "order_template": "order_template.xlsx",
 }
 
 
