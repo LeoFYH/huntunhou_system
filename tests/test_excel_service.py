@@ -56,6 +56,27 @@ def test_safety_stock_map(tmp_path: Path) -> None:
     assert next(iter(values.values())) == 60
 
 
+def test_safety_stock_map_does_not_treat_codes_as_stock_counts(tmp_path: Path) -> None:
+    safety = tmp_path / "safety_with_mixed_sheets.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "产成品模板"
+    ws.append(["产品编码", "产品名称", "规格型号", "计量单位", "安全库存数"])
+    ws.append(["050400066", "肉丁炸酱（鼓）", "2kg/袋", "袋", 58])
+
+    bad_sheet = wb.create_sheet("历史单据")
+    bad_sheet.append(["商品名称", "商品规格", "单位", "单价（元）", "盘点库存数", "安全库存数"])
+    bad_sheet.append(["肉丁炸酱", "2000g*1/袋", "袋", None, None, "050400066"])
+    wb.save(safety)
+
+    values = safety_stock_map(safety)
+
+    assert values[normalize_key("050400066")] == 58
+    assert values[normalize_key("肉丁炸酱（鼓）")] == 58
+    assert values.get(normalize_key("肉丁炸酱")) is None
+    assert normalize_key("50400066") not in values
+
+
 def test_extract_receipt_template_skus_dedupes_and_drops_transaction_fields(tmp_path: Path) -> None:
     path = tmp_path / "receipt_template.xlsx"
     wb = Workbook()

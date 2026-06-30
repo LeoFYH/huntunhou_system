@@ -364,16 +364,51 @@ def aggregate_orders(paths: list[Path], confirmed_items: list[dict[str, Any]] | 
     return summary
 
 
-def _store_safety_value(result: dict[str, float], name: Any, qty: Any, code: Any = None) -> None:
+def _is_plausible_safety_value(raw_value: Any, number: float | None) -> bool:
+    if number is None or number < 0:
+        return False
+    text = normalize_text(raw_value)
+    digits = re.sub(r"\D", "", text)
+    if abs(number) >= 1_000_000:
+        return False
+    if len(digits) >= 6 and abs(number) >= 100_000:
+        return False
+    return True
+
+
+def _store_safety_value(
+    result: dict[str, float],
+    name: Any,
+    qty: Any,
+    code: Any = None,
+    *,
+    overwrite: bool = True,
+) -> None:
     number = to_number(qty)
-    if number is None:
+    if not _is_plausible_safety_value(qty, number):
         return
     product_key = normalize_key(name)
-    if product_key:
+    if product_key and (overwrite or product_key not in result):
         result[product_key] = float(number)
     code_key = normalize_key(code)
-    if code_key:
+    if code_key and (overwrite or code_key not in result):
         result[code_key] = float(number)
+
+
+def _table_qty_can_be_safety(columns: dict[str, int]) -> bool:
+    if "qty" not in columns:
+        return False
+    transaction_keys = {
+        "price",
+        "order_qty",
+        "inventory",
+        "inbound",
+        "outbound",
+        "theory_stock",
+        "production",
+        "warehouse",
+    }
+    return not any(key in columns for key in transaction_keys)
 
 
 def _fallback_safety_rows(ws, result: dict[str, float]) -> None:
@@ -391,7 +426,7 @@ def _fallback_safety_rows(ws, result: dict[str, float]) -> None:
         name_col, name = max(text_cells, key=lambda item: len(normalize_text(item[1])))
         right_numbers = [(col, value) for col, value in numeric_cells if col > name_col]
         qty = (right_numbers or numeric_cells)[-1][1]
-        _store_safety_value(result, name, qty)
+        _store_safety_value(result, name, qty, overwrite=False)
 
 
 def safety_stock_map(path: Path | None) -> dict[str, float]:
@@ -399,9 +434,10 @@ def safety_stock_map(path: Path | None) -> dict[str, float]:
         return {}
     result: dict[str, float] = {}
     wb = load_workbook(path, data_only=True)
+    fallback_sheets = []
     for ws in wb.worksheets:
         table = detect_table(ws, "safety")
-        if table and ("safety" in table.columns or "qty" in table.columns):
+        if table and ("safety" in table.columns or _table_qty_can_be_safety(table.columns)):
             product_col = table.columns["product"]
             safety_col = table.columns.get("safety") or table.columns.get("qty")
             code_col = table.columns.get("code")
@@ -411,7 +447,10 @@ def safety_stock_map(path: Path | None) -> dict[str, float]:
                     ws.cell(row, product_col).value,
                     ws.cell(row, safety_col).value,
                     ws.cell(row, code_col).value if code_col else None,
+                    overwrite=False,
                 )
+            continue
+        if table:
             continue
 
         header_row = None
@@ -433,10 +472,14 @@ def safety_stock_map(path: Path | None) -> dict[str, float]:
                     ws.cell(row, product_col).value,
                     ws.cell(row, safety_col).value,
                     ws.cell(row, code_col).value if code_col else None,
+                    overwrite=False,
                 )
             continue
 
-        _fallback_safety_rows(ws, result)
+        fallback_sheets.append(ws)
+    if not result:
+        for ws in fallback_sheets or wb.worksheets:
+            _fallback_safety_rows(ws, result)
     return result
 
 

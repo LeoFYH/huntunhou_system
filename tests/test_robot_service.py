@@ -265,6 +265,42 @@ def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
         assert ws["M4"].value is None
 
 
+def test_generate_production_workbook_ignores_code_like_safety_values() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        template_path = tmp_dir / "production_template.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws["A1"] = "排产单"
+        ws.append(["序号", "类别", "编码", "商品名称", "规格", "单位", "单价", "盘点库存数", "安全库存数", "入库数", "出库数量", "理论库存数", "排产量"])
+        wb.save(template_path)
+
+        safety_path = tmp_dir / "safety.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "产成品模板"
+        ws.append(["产品编码", "产品名称", "规格型号", "计量单位", "安全库存数"])
+        ws.append(["050400066", "肉丁炸酱（鼓）", "2kg/袋", "袋", 58])
+        bad_sheet = wb.create_sheet("历史单据")
+        bad_sheet.append(["商品名称", "商品规格", "单位", "单价（元）", "盘点库存数", "安全库存数"])
+        bad_sheet.append(["肉丁炸酱", "2000g*1/袋", "袋", None, None, "050400066"])
+        wb.save(safety_path)
+
+        output, _warnings = generate_production_workbook(
+            order_paths=[],
+            production_template_path=template_path,
+            safety_stock_path=safety_path,
+            confirmed_items=[{"product": "肉丁炸酱", "code": "050400066", "quantity": 10, "unit": "袋"}],
+            order_date=date(2026, 6, 30),
+            output_dir=tmp_dir,
+        )
+
+        wb = load_workbook(output, data_only=False)
+        ws = wb.active
+        assert ws["I4"].value == 58
+        assert ws["I4"].value != 50400066
+
+
 def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> None:
     with TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
