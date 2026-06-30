@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
@@ -1122,63 +1123,8 @@ def generate_order_documents(
 
     generated: list[Path] = []
     output_date = (order_date or date.today()).isoformat()
-    first_template = template_path or (order_paths[0] if order_paths else None)
     for store, products in store_products.items():
-        template = store_template.get(store) or first_template
-        if not template:
-            wb = Workbook()
-            ws = wb.active
-            write_basic_headers(ws, f"馄饨侯（{_store_title_name(store)}）店产品订货单", ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"])
-            for idx, item in enumerate(products.values(), 1):
-                ws.append(
-                    [
-                        idx,
-                        item.get("category", ""),
-                        item.get("code", ""),
-                        item.get("product", ""),
-                        item.get("spec", ""),
-                        item.get("unit", ""),
-                        display_number(item.get("price")),
-                        display_number(item.get("quantity")),
-                    ]
-                )
-        else:
-            wb, ws, table = _best_shipment_sheet(template, store, products)
-            if not ws or not table:
-                warnings.append(f"{template.name} 没有识别到订单格式，已跳过。")
-                continue
-            for other in list(wb.worksheets):
-                if other is not ws:
-                    wb.remove(other)
-            ws.title = _safe_sheet_title(store)
-            update_order_header(ws, store, order_date, list(products.values()))
-            qty_col = table.columns.get("order_qty")
-            lookup = _shipment_item_lookup(products)
-            seen_items: set[int] = set()
-            rows_to_delete: list[int] = []
-            if qty_col:
-                for r in range(table.data_start, last_nonempty_row(ws) + 1):
-                    item = None
-                    for key in _shipment_row_match_keys(ws, r, table.columns):
-                        item = lookup.get(key)
-                        if item:
-                            break
-                    if item:
-                        seen_items.add(id(item))
-                        _write_shipment_matched_row(ws, r, table.columns, item)
-                    elif _is_shipment_product_row(ws, r, table.columns):
-                        rows_to_delete.append(r)
-                    else:
-                        ws.cell(r, qty_col).value = None
-            for row in reversed(rows_to_delete):
-                ws.delete_rows(row)
-            max_sequence = _renumber_shipment_rows(ws, table)
-            for item in products.values():
-                if id(item) in seen_items:
-                    continue
-                max_sequence += 1
-                _append_shipment_item(ws, table, item, max_sequence)
-            _renumber_shipment_rows(ws, table)
+        wb = _build_order_document_workbook(store, list(products.values()), order_date)
         safe_store = re.sub(r"[^\w\u4e00-\u9fff]+", "_", store).strip("_") or "门店"
         output = output_dir / f"{safe_store}_订货单_{output_date}.xlsx"
         wb.save(output)
@@ -1191,6 +1137,81 @@ def generate_order_documents(
         for path in generated:
             archive.write(path, path.name)
     return zip_path, warnings
+
+
+def _format_order_date(value: date | None) -> str:
+    if not value:
+        return ""
+    return f"{value.month}/{value.day}/{value.year}"
+
+
+def _build_order_document_workbook(store: str, items: list[dict[str, Any]], order_date: date | None) -> Workbook:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_sheet_title(store)
+
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+    header_fill = PatternFill("solid", fgColor="F3F3F3")
+
+    ws.merge_cells("A1:H1")
+    ws["A1"] = f"馄饨侯（{_store_title_name(store)}）店产品订货单"
+    ws["A1"].font = Font(name="SimSun", size=18, bold=True)
+    ws["A1"].alignment = center
+    ws.row_dimensions[1].height = 32
+
+    orderer = first_present(*(item.get(field) for item in items for field in ("orderer", "buyer", "contact_name", "customer")))
+    phone = first_present(*(item.get(field) for item in items for field in ("phone", "contact_phone", "mobile")))
+    delivery_date = first_present(*(item.get("deliver_date") for item in items))
+
+    for cell, value in {
+        "A2": "订货日期：",
+        "D2": _format_order_date(order_date),
+        "H2": "订货人：",
+        "I2": orderer,
+        "A3": "到货日期：",
+        "D3": delivery_date,
+        "H3": "联系电话：",
+        "I3": phone,
+    }.items():
+        ws[cell] = value
+        ws[cell].font = Font(name="SimSun", size=12, bold=cell in {"A2", "A3", "H2", "H3"})
+        ws[cell].alignment = left if cell in {"A2", "A3", "H2", "H3"} else center
+
+    headers = ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"]
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(4, col)
+        cell.value = header
+        cell.font = Font(name="SimSun", size=11, bold=True)
+        cell.fill = header_fill
+        cell.border = border
+        cell.alignment = center
+
+    for row_index, item in enumerate(items, 5):
+        values = [
+            row_index - 4,
+            item.get("category", ""),
+            item.get("code", ""),
+            item.get("product", ""),
+            item.get("spec", ""),
+            item.get("unit", ""),
+            display_number(item.get("price")),
+            display_number(item.get("quantity")),
+        ]
+        for col, value in enumerate(values, 1):
+            cell = ws.cell(row_index, col)
+            cell.value = value
+            cell.font = Font(name="SimSun", size=11)
+            cell.border = border
+            cell.alignment = center if col in {1, 6, 7, 8} else left
+
+    widths = {1: 8, 2: 12, 3: 14, 4: 24, 5: 20, 6: 10, 7: 12, 8: 12, 9: 16}
+    for col, width in widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = "A5"
+    return wb
 
 
 def _eval_linear_formula(ws, cell_ref: str, cache: dict[str, tuple[float, float]], stack: set[str] | None = None) -> tuple[float, float]:
@@ -1414,6 +1435,38 @@ def parse_conversion_table(path: Path | None) -> dict[str, float]:
     return conversions
 
 
+_SPEC_UNIT_TO_KG = {
+    "kg": 1.0,
+    "KG": 1.0,
+    "千克": 1.0,
+    "公斤": 1.0,
+    "斤": 0.5,
+    "g": 0.001,
+    "G": 0.001,
+    "克": 0.001,
+    "l": 1.0,
+    "L": 1.0,
+    "升": 1.0,
+    "ml": 0.001,
+    "ML": 0.001,
+    "毫升": 0.001,
+}
+
+
+def _spec_conversion_factor(detail: dict[str, Any]) -> float | None:
+    unit = normalize_text(detail.get("unit"))
+    if unit in _SPEC_UNIT_TO_KG:
+        return _SPEC_UNIT_TO_KG[unit]
+
+    spec = normalize_text(detail.get("spec"))
+    if spec:
+        match = re.search(r"(\d+(?:\.\d+)?)(kg|KG|千克|公斤|斤|g|G|克|ml|ML|毫升|l|L|升)", spec)
+        if match:
+            unit = match.group(2)
+            return float(match.group(1)) * _SPEC_UNIT_TO_KG[unit]
+    return None
+
+
 def _coerce_paths(value: Path | list[Path] | None) -> list[Path]:
     if not value:
         return []
@@ -1511,8 +1564,6 @@ def generate_material_issue_workbook(
         missing.append("已填好的排产表")
     if not recipe_paths:
         missing.append("原材料配方表/投料单")
-    if not conversion_path:
-        missing.append("单位换算表")
     if not stock_owner_path:
         missing.append("所属库表")
     if missing:
@@ -1521,7 +1572,6 @@ def generate_material_issue_workbook(
     warnings: list[str] = []
     production_rows = parse_rows(production_path, "production")
     recipes = parse_recipe_tables(recipe_paths)
-    conversions = parse_conversion_table(conversion_path)
     stock_owner_details = parse_stock_owner_details(stock_owner_path)
     workshop_stock = parse_workshop_stock(workshop_stock_text)
 
@@ -1557,11 +1607,11 @@ def generate_material_issue_workbook(
             need -= workshop_stock.get(raw_key, 0.0)
             if need <= 0:
                 continue
-            factor = conversions.get(raw_key)
+            owner = stock_owner_details.get(raw_key, {})
+            factor = _spec_conversion_factor(owner)
             issue_qty = math.ceil(need / factor) if factor else need
             if not factor:
-                warnings.append(f"{recipe['raw']} 没有换算规格，按原始用量输出。")
-            owner = stock_owner_details.get(raw_key, {})
+                warnings.append(f"{recipe['raw']} 在所属库表中没有可换算规格，按原始用量输出。")
             owner_price = owner.get("price")
             current_item = material_qty.setdefault(
                 raw_key,

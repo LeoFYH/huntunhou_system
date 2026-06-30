@@ -548,15 +548,35 @@ function renderOrderRollbackBlock(ids, mode, dateLabel, summary) {
   `;
 }
 
+function renderWarningBlocks(data) {
+  const groups = data.warning_groups || [];
+  if (groups.length) {
+    return `
+      <div class="warning-groups">
+        ${groups
+          .map((group) => {
+            const items = group.items || [];
+            if (!items.length) return "";
+            return `
+              <details class="warning-group" open>
+                <summary>${escapeHtml(group.title || "提示")} <span>${items.length}</span></summary>
+                ${items.map((warning) => `<div class="warning-item">${escapeHtml(warning)}</div>`).join("")}
+              </details>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+  return (data.warnings || []).map((warning) => `<div class="notice">${escapeHtml(warning)}</div>`).join("");
+}
+
 function renderDownload(target, data, options = {}) {
-  const warnings = data.warnings || [];
   const missing = data.missing || [];
   const mode = options.mode || "production";
   let html = "";
   if (missing.length) html += `<div class="notice">缺少：${missing.map(escapeHtml).join("、")}</div>`;
-  warnings.forEach((warning) => {
-    html += `<div class="notice">${escapeHtml(warning)}</div>`;
-  });
+  html += renderWarningBlocks(data);
   if (data.output) {
     html += `<div class="download"><span>${escapeHtml(data.output.name)}</span><a href="${data.output.url}">下载</a></div>`;
   }

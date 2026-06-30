@@ -107,13 +107,6 @@
               <button class="t-reset" data-reset-slot="recipe_table">重置</button>
             </div>
             <div class="recipe-preview" id="recipePreview"></div>
-            <div class="tpl" data-template="conversion_table">
-              <span class="dot"></span>
-              <span class="t-name">单位转换表</span>
-              <span class="t-meta" data-files="conversion_table"></span>
-              <label class="t-reset">换新的<input type="file" data-slot="conversion_table" accept=".xlsx,.xls" /></label>
-              <button class="t-reset" data-reset-slot="conversion_table">重置</button>
-            </div>
             <div class="tpl" data-template="stock_owner_table">
               <span class="dot"></span>
               <span class="t-name">所属库表</span>
@@ -121,7 +114,7 @@
               <label class="t-reset">换新的<input type="file" multiple data-slot="stock_owner_table" accept=".xlsx,.xls" /></label>
               <button class="t-reset" data-reset-slot="stock_owner_table">重置</button>
             </div>
-            <p class="tpl-note">所属库表只用于给原料补“所属库”：成品、冷冻、冷藏、主食等。</p>
+            <p class="tpl-note">所属库表用于给原料补所属库、存货编码、规格型号、主计量和单价；领料规格从这里读取。</p>
           </div>
 
           <div class="block">
@@ -241,6 +234,6 @@
 
       <p class="note">模板不点“换新的/重置”就一直保存。订单、入库、发货都从机器人同步，确认后再生成。</p>
     </main>
-    <script src="/assets/app.js?v=20260630-order-docs"></script>
+    <script src="/assets/app.js?v=20260630-material-order-fixes"></script>
   </body>
 </html>

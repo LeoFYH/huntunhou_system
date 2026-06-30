@@ -125,6 +125,26 @@ def _parse_order_date(value: str | None) -> date | None:
             raise HTTPException(status_code=400, detail=f"order_date 格式无效：{value}")
 
 
+def _material_warning_groups(warnings: list[str]) -> list[dict[str, Any]]:
+    buckets: list[tuple[str, list[str], list[str]]] = [
+        ("找不到配方", ["没有找到对应投料单/配方"], []),
+        ("模糊配方", ["模糊匹配"], []),
+        ("缺规格/无法换算", ["规格", "换算"], []),
+        ("缺所属库", ["所属库"], []),
+        ("其他提示", [], []),
+    ]
+    for warning in warnings:
+        placed = False
+        for _title, keywords, items in buckets[:-1]:
+            if any(keyword in warning for keyword in keywords):
+                items.append(warning)
+                placed = True
+                break
+        if not placed:
+            buckets[-1][2].append(warning)
+    return [{"title": title, "items": items} for title, _keywords, items in buckets if items]
+
+
 def _robot_failure_ids() -> list[Any]:
     ids: list[Any] = []
     seen: set[str] = set()
@@ -475,7 +495,7 @@ async def generate_material_upload(
             output, missing, warnings = generate_material_issue_workbook(
                 production_path=production_path,
                 recipe_paths=slot_paths("recipe_table"),
-                conversion_path=slot_path("conversion_table"),
+                conversion_path=None,
                 stock_owner_path=slot_paths("stock_owner_table"),
                 material_template_path=slot_path("material_template"),
                 workshop_stock_text="",
@@ -485,10 +505,10 @@ async def generate_material_upload(
         except SpreadsheetReadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if missing:
-            return {"status": "missing_config", "missing": missing, "warnings": warnings}
+            return {"status": "missing_config", "missing": missing, "warnings": warnings, "warning_groups": _material_warning_groups(warnings)}
         assert output is not None
         registered = register_output(output, output.name)
-    return {"status": "ok", "output": registered, "warnings": warnings}
+    return {"status": "ok", "output": registered, "warnings": warnings, "warning_groups": _material_warning_groups(warnings)}
 
 
 @app.post("/api/generate/receipt")

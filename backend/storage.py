@@ -27,7 +27,6 @@ RESIDENT_SLOTS = {
     "production_template",
     "safety_stock_table",
     "recipe_table",
-    "conversion_table",
     "stock_owner_table",
     "material_template",
     "receipt_template",

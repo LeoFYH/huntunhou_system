@@ -630,6 +630,41 @@ label.t-reset,
   font-weight: 700;
 }
 
+.warning-groups {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.warning-group {
+  border: 1px solid #f0e2c4;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12.5px;
+  overflow: hidden;
+}
+
+.warning-group summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  list-style: none;
+  padding: 9px 12px;
+  font-weight: 700;
+}
+
+.warning-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.warning-item {
+  border-top: 1px solid #f0e2c4;
+  padding: 8px 12px;
+  line-height: 1.45;
+}
+
 .sku-import-status {
   margin-top: 10px;
 }

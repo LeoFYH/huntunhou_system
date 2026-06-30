@@ -353,10 +353,12 @@ def test_generate_order_documents_uses_order_template_title_and_filters_rows() -
             confirmed_items=[
                 {
                     "store": "鼓楼",
+                    "category": "馄饨",
+                    "code": "05020094",
                     "product": "鸡汤虾肉馄饨",
-                    "spec": "机器人规格不覆盖模板",
-                    "unit": "袋",
-                    "price": 999.99,
+                    "spec": "500g/袋*12袋",
+                    "unit": "箱",
+                    "price": 399.11,
                     "quantity": 3,
                 },
                 {
@@ -378,7 +380,7 @@ def test_generate_order_documents_uses_order_template_title_and_filters_rows() -
         wb = load_workbook(output, data_only=True)
         ws = wb.active
         assert ws["A1"].value == "馄饨侯（鼓楼）店产品订货单"
-        assert ws["D2"].value == "2026-06-27"
+        assert ws["D2"].value == "6/27/2026"
         assert [ws.cell(5, col).value for col in range(1, 9)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
         assert ws.cell(6, 4).value is None
 
@@ -509,7 +511,7 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         output, missing, warnings = generate_material_issue_workbook(
             production_path=production_path,
             recipe_paths=[recipe_path],
-            conversion_path=conversion_path,
+            conversion_path=None,
             stock_owner_path=owner_path,
             material_template_path=None,
             workshop_stock_text="",
@@ -527,6 +529,7 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         assert ws["A3"].value == "0202"
         assert ws["C3"].value == "10kg"
         assert ws["D3"].value == "斤"
+        assert ws["E3"].value == 20
         assert ws["F3"].value == "冷冻"
         assert ws["G3"].value == 12.25
 
@@ -568,7 +571,7 @@ def test_generate_material_issue_workbook_fuzzy_matches_finished_recipe() -> Non
         output, missing, warnings = generate_material_issue_workbook(
             production_path=production_path,
             recipe_paths=[recipe_path],
-            conversion_path=conversion_path,
+            conversion_path=None,
             stock_owner_path=owner_path,
             material_template_path=None,
             workshop_stock_text="",
