@@ -1581,6 +1581,16 @@ def _mapped_owner_detail(
     return None, {}
 
 
+def _material_mapping_reason(owner: dict[str, Any], factor: float | None) -> str:
+    if not owner:
+        return "投料表原料名没有匹配到所属库表，请确认对应的标准原料。"
+    if not factor:
+        return "所属库表匹配项缺少可换算规格，请选择带规格的标准原料。"
+    if not owner.get("warehouse"):
+        return "所属库表匹配项缺少所属库，请确认对应的标准原料。"
+    return ""
+
+
 def parse_stock_owner_table(path: Path | list[Path] | None) -> dict[str, str]:
     return {
         key: detail["warehouse"]
@@ -1682,18 +1692,19 @@ def generate_material_issue_workbook(
             if need <= 0:
                 continue
             owner_key, owner = _mapped_owner_detail(raw_key, stock_owner_details, material_mappings)
-            if require_confirmed_mappings and not owner:
+            factor = _spec_conversion_factor(owner) if owner else None
+            mapping_reason = _material_mapping_reason(owner, factor)
+            if require_confirmed_mappings and mapping_reason:
                 mapping_requests_by_key.setdefault(
                     raw_key,
                     {
                         "raw_key": raw_key,
                         "raw_name": recipe["raw"],
-                        "reason": "投料表原料名没有匹配到所属库表，请确认对应的标准原料。",
+                        "reason": mapping_reason,
                         "candidates": material_owner_candidates(recipe["raw"], stock_owner_details),
                     },
                 )
                 continue
-            factor = _spec_conversion_factor(owner)
             issue_qty = math.ceil(need / factor) if factor else need
             if not factor:
                 warnings.append(f"{recipe['raw']} 在所属库表中没有可换算规格，按原始用量输出。")
