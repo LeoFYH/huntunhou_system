@@ -803,3 +803,16 @@ def test_hard_clear_buttons_and_robot_endpoints_are_wired() -> None:
     assert '@app.post("/api/robot/receipts/clear-date")' in main
     assert "/api/orders/clear_by_date" in robot
     assert "/api/receipts/clear_by_date" in robot
+
+
+def test_sync_buttons_fetch_all_daily_records_regardless_fetched_status() -> None:
+    app_js = Path("web/app.js").read_text(encoding="utf-8")
+    main = Path("backend/main.py").read_text(encoding="utf-8")
+    robot = Path("backend/services/robot_service.py").read_text(encoding="utf-8")
+
+    assert 'const status = "all";' in app_js
+    assert "status=new" not in app_js
+    assert "status=all&date=" in app_js
+    assert 'async def robot_fetch_orders(status: str = "all"' in main
+    assert 'async def robot_fetch_receipts(date: str | None = None, status: str = "all")' in main
+    assert 'params = {"status": status}' in robot

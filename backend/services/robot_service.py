@@ -322,10 +322,10 @@ async def fetch_robot_orders(
     return normalize_robot_orders(response.json(), extra_base_stores=extra_base_stores)
 
 
-async def fetch_robot_receipts(receipt_date: str | None = None) -> dict[str, Any]:
+async def fetch_robot_receipts(receipt_date: str | None = None, status: str = "all") -> dict[str, Any]:
     if not ROBOT_API_BASE:
         raise RuntimeError("未配置 ROBOT_API_BASE。")
-    params = {}
+    params = {"status": status}
     if receipt_date:
         params["date"] = receipt_date
     async with httpx.AsyncClient(timeout=ROBOT_API_TIMEOUT_SECONDS) as client:

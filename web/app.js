@@ -510,7 +510,7 @@ async function syncOrderModule(mode, noticeText = "正在同步订单库...") {
         ? $("#orderDocumentSyncResult")
         : $("#orderSyncResult");
   const dateSelector = mode === "shipment" ? "#dateModule4" : mode === "order_document" ? "#dateModule5" : "#dateModule1";
-  const status = mode === "production" ? "new" : "all";
+  const status = "all";
   target.classList.remove("hidden");
   target.innerHTML = `<div class="notice">${escapeHtml(noticeText)}</div>`;
   const data = await request(`/api/robot/orders/fetch?status=${status}&order_date=${encodeURIComponent(selectedDate(dateSelector))}`);
@@ -908,7 +908,7 @@ $("#syncReceipts").addEventListener("click", async (event) => {
     target.classList.remove("hidden");
     target.innerHTML = `<div class="notice">正在同步入库数据...</div>`;
     try {
-      const data = await request(`/api/robot/receipts/fetch?date=${encodeURIComponent(selectedDate("#dateModule3"))}`);
+      const data = await request(`/api/robot/receipts/fetch?status=all&date=${encodeURIComponent(selectedDate("#dateModule3"))}`);
       renderReceiptSync(data);
     } catch (error) {
       target.innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;

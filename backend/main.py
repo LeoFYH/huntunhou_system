@@ -176,7 +176,7 @@ def _robot_failure_ids() -> list[Any]:
 
 
 @app.get("/api/robot/orders/fetch")
-async def robot_fetch_orders(status: str = "new", order_date: str | None = None) -> dict[str, Any]:
+async def robot_fetch_orders(status: str = "all", order_date: str | None = None) -> dict[str, Any]:
     try:
         return await fetch_robot_orders(status=status, order_date=order_date)
     except Exception as exc:
@@ -184,9 +184,9 @@ async def robot_fetch_orders(status: str = "new", order_date: str | None = None)
 
 
 @app.get("/api/robot/receipts/fetch")
-async def robot_fetch_receipts(date: str | None = None) -> dict[str, Any]:
+async def robot_fetch_receipts(date: str | None = None, status: str = "all") -> dict[str, Any]:
     try:
-        return await fetch_robot_receipts(receipt_date=date)
+        return await fetch_robot_receipts(receipt_date=date, status=status)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
