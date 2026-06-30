@@ -372,19 +372,33 @@ def test_generate_order_documents_uses_order_template_title_and_filters_rows() -
                     "price": 12.5,
                     "quantity": 0,
                 },
+                {
+                    "store": "鼓楼",
+                    "category": "小吃",
+                    "code": "NEW02",
+                    "product": "新增有效品",
+                    "spec": "2kg",
+                    "unit": "箱",
+                    "price": 20,
+                    "quantity": 2,
+                    "deliver_date": "2026-06-28",
+                },
             ],
             order_date=date(2026, 6, 27),
             output_dir=tmp_dir,
         )
 
         assert warnings == []
-        wb = load_workbook(output, data_only=True)
+        wb = load_workbook(output, data_only=False)
         ws = wb.active
         assert ws["A1"].value == "馄饨侯（鼓楼）店产品订货单"
         assert ws["D2"].value == "6/27/2026"
         assert [ws.cell(4, col).value for col in range(1, 11)] == ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量", "金额", "到货日期"]
         assert [ws.cell(5, col).value for col in range(1, 11)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3, 1197.33, "2026-06-28"]
-        assert ws.cell(6, 4).value is None
+        assert [ws.cell(6, col).value for col in range(1, 11)] == [2, "小吃", "NEW02", "新增有效品", "2kg", "箱", 20, 2, 40, "2026-06-28"]
+        assert ws.cell(7, 8).value == "合计"
+        assert ws.cell(7, 9).value == "=SUM(I5:I6)"
+        assert ws.cell(8, 4).value is None
 
 
 def test_generate_shipment_uses_t6_template_sheet_and_filters_zero_rows() -> None:

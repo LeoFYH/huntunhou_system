@@ -1214,6 +1214,16 @@ def _build_order_document_workbook(store: str, items: list[dict[str, Any]], orde
             cell.border = border
             cell.alignment = center if col in {1, 6, 7, 8, 9, 10} else left
 
+    if items:
+        total_row = len(items) + 5
+        for col in range(1, 11):
+            cell = ws.cell(total_row, col)
+            cell.font = Font(name="SimSun", size=11, bold=True)
+            cell.border = border
+            cell.alignment = center
+        ws.cell(total_row, 8).value = "合计"
+        ws.cell(total_row, 9).value = f"=SUM(I5:I{total_row - 1})"
+
     widths = {1: 8, 2: 12, 3: 14, 4: 24, 5: 20, 6: 10, 7: 12, 8: 12, 9: 12, 10: 16}
     for col, width in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
