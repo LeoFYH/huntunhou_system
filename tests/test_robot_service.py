@@ -262,7 +262,7 @@ def test_generate_production_workbook_fills_safety_from_safety_table() -> None:
         assert ws["I4"].value == 80
         assert ws["K4"].value == 3
         assert ws["L4"].value is None
-        assert ws["M4"].value == 80
+        assert ws["M4"].value is None
 
 
 def test_generate_shipment_uses_order_template_shape_and_full_item_fields() -> None:
@@ -471,7 +471,7 @@ def test_generate_completed_production_workbook_calculates_theory_stock() -> Non
         wb = load_workbook(output, data_only=False)
         ws = wb.active
         assert ws["L2"].value == 22
-        assert ws["M2"].value == 80
+        assert ws["M2"].value == -58
 
 
 def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> None:

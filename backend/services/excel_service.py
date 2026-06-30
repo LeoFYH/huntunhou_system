@@ -594,7 +594,7 @@ def generate_production_workbook(
                 "inbound": None,
                 "outbound": order_qty,
                 "theory_stock_formula": None,
-                "production": safety,
+                "production": None,
             }
         )
 
@@ -650,7 +650,7 @@ def generate_production_workbook(
                 "inbound": None,
                 "outbound": display_number(item["outbound"]),
                 "theory_stock": None,
-                "production": display_number(item["production"]),
+                "production": None,
             }
             for key, value in values.items():
                 col = cols.get(key)
@@ -675,7 +675,7 @@ def generate_production_workbook(
                     None,
                     display_number(item["outbound"]),
                     None,
-                    display_number(item["production"]),
+                    None,
                 ]
             )
     output = output_dir / f"排产表_待补充_{workbook_date.isoformat()}.xlsx"
@@ -711,19 +711,20 @@ def generate_completed_production_workbook(
         for row in range(table.data_start, last_nonempty_row(ws) + 1):
             if not normalize_text(ws.cell(row, product_col).value):
                 continue
-            if production_col and safety_col:
-                safety = to_number(ws.cell(row, safety_col).value)
-                if safety is not None:
-                    ws.cell(row, production_col).value = display_number(safety)
             inventory = to_number(ws.cell(row, inventory_col).value)
             inbound = to_number(ws.cell(row, inbound_col).value)
             outbound = to_number(ws.cell(row, outbound_col).value) if outbound_col else 0.0
             if inventory is None or inbound is None:
                 skipped_rows += 1
                 ws.cell(row, theory_col).value = None
+                if production_col:
+                    ws.cell(row, production_col).value = None
                 continue
             theory_stock = float(inventory) + float(inbound) - float(outbound or 0.0)
             ws.cell(row, theory_col).value = display_number(theory_stock)
+            if production_col and safety_col:
+                safety = to_number(ws.cell(row, safety_col).value)
+                ws.cell(row, production_col).value = display_number(theory_stock - float(safety)) if safety is not None else None
             updated_rows += 1
     if not updated_rows:
         warnings.append("没有计算到理论库存数，请确认已上传填好盘点库存数和入库数的排产表。")
@@ -1593,7 +1594,8 @@ def generate_material_issue_workbook(
         current = float(current)
         if current >= float(safety) * 0.5:
             continue
-        production_qty = float(row.get("production") or safety)
+        production_qty_value = row.get("production")
+        production_qty = abs(float(production_qty_value)) if production_qty_value not in (None, "") else float(safety)
         product_recipes, fuzzy_warning = _recipe_candidates_for_product(recipe_by_product, row["product_key"], row["product"])
         if fuzzy_warning:
             warnings.append(fuzzy_warning)
