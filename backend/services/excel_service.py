@@ -119,6 +119,7 @@ def _table_columns_from_headers(headers: dict[int, str], current_headers: dict[i
         "spec": ["规格型号", "商品规格", "规格"],
         "unit": ["主计量", "单位"],
         "price": ["本币无税单价", "无税单价", "含税单价", "单价"],
+        "amount": ["价税合计", "金额", "总价"],
         "order_qty": ["订货数量"],
         "qty": ["数量"],
         "safety": ["安全库存数", "安全库存"],
@@ -973,6 +974,14 @@ def _merge_shipment_item(
         current["price"] = price
 
 
+def _item_amount(item: dict[str, Any]) -> float | None:
+    price = to_number(item.get("price"))
+    quantity = to_number(item.get("quantity"))
+    if price is None or quantity is None:
+        return None
+    return price * quantity
+
+
 def _write_shipment_item_to_row(ws, row: int, columns: dict[str, int], item: dict[str, Any], sequence: int | None = None) -> None:
     values = {
         "category": item.get("category", ""),
@@ -982,6 +991,7 @@ def _write_shipment_item_to_row(ws, row: int, columns: dict[str, int], item: dic
         "unit": item.get("unit", ""),
         "price": display_number(item.get("price")),
         "order_qty": display_number(item.get("quantity")),
+        "amount": display_number(_item_amount(item)),
     }
     if sequence is not None:
         values["sequence"] = sequence
@@ -995,6 +1005,9 @@ def _write_shipment_quantity_to_row(ws, row: int, columns: dict[str, int], item:
     qty_col = columns.get("order_qty")
     if qty_col:
         ws.cell(row, qty_col).value = display_number(item.get("quantity"))
+    amount_col = columns.get("amount")
+    if amount_col:
+        ws.cell(row, amount_col).value = display_number(_item_amount(item))
 
 
 def _write_shipment_matched_row(ws, row: int, columns: dict[str, int], item: dict[str, Any]) -> None:
@@ -1005,6 +1018,7 @@ def _write_shipment_matched_row(ws, row: int, columns: dict[str, int], item: dic
         "spec": item.get("spec", ""),
         "unit": item.get("unit", ""),
         "price": display_number(item.get("price")),
+        "amount": display_number(_item_amount(item)),
     }
     for key, value in values.items():
         col = columns.get(key)
@@ -1175,6 +1189,16 @@ def generate_order_documents(
         wb.save(output)
         generated.append(output)
 
+    if len(store_products) > 1:
+        total_products: dict[str, dict[str, Any]] = {}
+        for products in store_products.values():
+            for item in products.values():
+                _merge_shipment_item(total_products, item, item.get("quantity"))
+        output = output_dir / f"汇总_订货单_{output_date}.xlsx"
+        wb = _build_order_document_workbook("汇总", list(total_products.values()), order_date)
+        wb.save(output)
+        generated.append(output)
+
     if len(generated) == 1:
         return generated[0], warnings
     zip_path = output_dir / f"订货单_{output_date}.zip"
@@ -1259,13 +1283,14 @@ def _build_order_document_workbook(store: str, items: list[dict[str, Any]], orde
 
     if items:
         total_row = len(items) + 5
+        total_amount = sum(_item_amount(item) or 0 for item in items)
         for col in range(1, 11):
             cell = ws.cell(total_row, col)
             cell.font = Font(name="SimSun", size=11, bold=True)
             cell.border = border
             cell.alignment = center
         ws.cell(total_row, 8).value = "合计"
-        ws.cell(total_row, 9).value = f"=SUM(I5:I{total_row - 1})"
+        ws.cell(total_row, 9).value = display_number(total_amount)
 
     widths = {1: 8, 2: 12, 3: 14, 4: 24, 5: 20, 6: 10, 7: 12, 8: 12, 9: 12, 10: 16}
     for col, width in widths.items():

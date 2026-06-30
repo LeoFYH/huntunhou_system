@@ -1,4 +1,5 @@
 import asyncio
+import zipfile
 from datetime import date
 from tempfile import TemporaryDirectory
 from pathlib import Path
@@ -433,8 +434,45 @@ def test_generate_order_documents_uses_order_template_title_and_filters_rows() -
         assert [ws.cell(5, col).value for col in range(1, 11)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3, 1197.33, "2026-06-28"]
         assert [ws.cell(6, col).value for col in range(1, 11)] == [2, "小吃", "NEW02", "新增有效品", "2kg", "箱", 20, 2, 40, "2026-06-28"]
         assert ws.cell(7, 8).value == "合计"
-        assert ws.cell(7, 9).value == "=SUM(I5:I6)"
+        assert ws.cell(7, 9).value == 1237.33
         assert ws.cell(8, 4).value is None
+
+
+def test_generate_order_documents_adds_summary_workbook_for_multiple_stores() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        output, warnings = generate_order_documents(
+            order_paths=[],
+            template_path=None,
+            confirmed_items=[
+                {"store": "地安门", "category": "馄饨", "code": "A1", "product": "鸡汤鲜肉馄饨", "spec": "260g", "unit": "箱", "price": 10, "quantity": 2},
+                {"store": "鼓楼", "category": "馄饨", "code": "A1", "product": "鸡汤鲜肉馄饨", "spec": "260g", "unit": "箱", "price": 10, "quantity": 3},
+                {"store": "鼓楼", "category": "包子类", "code": "B1", "product": "京味包子", "spec": "55g", "unit": "袋", "price": 20, "quantity": 1},
+            ],
+            order_date=date(2026, 6, 30),
+            output_dir=tmp_dir,
+        )
+
+        assert warnings == []
+        assert output.suffix == ".zip"
+        with zipfile.ZipFile(output) as archive:
+            names = sorted(archive.namelist())
+            assert names == sorted(
+                [
+                    "地安门_订货单_2026-06-30.xlsx",
+                    "鼓楼_订货单_2026-06-30.xlsx",
+                    "汇总_订货单_2026-06-30.xlsx",
+                ]
+            )
+            archive.extract("汇总_订货单_2026-06-30.xlsx", tmp_dir)
+
+        wb = load_workbook(tmp_dir / "汇总_订货单_2026-06-30.xlsx", data_only=True)
+        ws = wb.active
+        assert ws["A1"].value == "馄饨侯（汇总）店产品订货单"
+        assert [ws.cell(5, col).value for col in range(1, 10)] == [1, "馄饨", "A1", "鸡汤鲜肉馄饨", "260g", "箱", 10, 5, 50]
+        assert [ws.cell(6, col).value for col in range(1, 10)] == [2, "包子类", "B1", "京味包子", "55g", "袋", 20, 1, 20]
+        assert ws.cell(7, 8).value == "合计"
+        assert ws.cell(7, 9).value == 70
 
 
 def test_generate_shipment_uses_t6_template_sheet_and_filters_zero_rows() -> None:
@@ -494,8 +532,8 @@ def test_generate_shipment_uses_t6_template_sheet_and_filters_zero_rows() -> Non
         ws = wb.active
         assert ws.title == "鼓楼"
         assert [ws.cell(1, col).value for col in range(1, 15)] == headers
-        assert [ws.cell(2, col).value for col in range(1, 8)] == [None, "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 3, 399.11]
-        assert [ws.cell(3, col).value for col in range(1, 8)] == [None, "NEW01", "新增品", "1kg", "袋", 2, 12.5]
+        assert [ws.cell(2, col).value for col in range(1, 10)] == [None, "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 3, 399.11, None, 1197.33]
+        assert [ws.cell(3, col).value for col in range(1, 10)] == [None, "NEW01", "新增品", "1kg", "袋", 2, 12.5, None, 25]
         exported_names = [ws.cell(row, 3).value for row in range(2, last_nonempty_row(ws) + 1)]
         assert "鸡汤菜肉馄饨" not in exported_names
         assert "鸡汤鲜肉馄饨" not in exported_names
