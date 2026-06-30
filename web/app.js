@@ -195,6 +195,7 @@ function editableOrderRows(batch, batchIndex) {
           const product = item.product || item.name || "";
           const quantity = item.quantity ?? item.qty ?? "";
           const price = item.price ?? "";
+          const deliverDate = item.deliver_date || "";
           return `
             <div class="edit-row" data-edit-batch="${batchIndex}" data-edit-index="${index}">
               <span class="edit-sequence">${itemIndex + 1}</span>
@@ -205,6 +206,7 @@ function editableOrderRows(batch, batchIndex) {
               <input data-order-edit-field data-edit-unit value="${escapeHtml(item.unit || "")}" aria-label="单位" />
               <input data-order-edit-field class="edit-price" data-edit-price inputmode="decimal" value="${escapeHtml(price)}" aria-label="单价" />
               <input data-order-edit-field class="edit-quantity" data-edit-quantity inputmode="decimal" value="${escapeHtml(quantity)}" aria-label="订货数量" />
+              <input data-order-edit-field data-edit-deliver-date value="${escapeHtml(deliverDate)}" aria-label="到货日期" />
             </div>
           `;
         })
@@ -218,7 +220,7 @@ function editableOrderRows(batch, batchIndex) {
           <div class="edit-table">
             <div class="edit-sheet">
               <div class="edit-head">
-                <span>序号</span><span>类别</span><span>编码</span><span>原料名称</span><span>规格</span><span>单位</span><span>单价</span><span>订货数量</span>
+                <span>序号</span><span>类别</span><span>编码</span><span>原料名称</span><span>规格</span><span>单位</span><span>单价</span><span>订货数量</span><span>到货日期</span>
               </div>
               ${rows}
             </div>
@@ -366,6 +368,7 @@ function collectEditedOrderItems(container, batch, batchIndex) {
       const unit = row.querySelector("[data-edit-unit]")?.value.trim() || "";
       const price = parseQuantity(row.querySelector("[data-edit-price]")?.value);
       const quantity = parseQuantity(row.querySelector("[data-edit-quantity]")?.value);
+      const deliverDate = row.querySelector("[data-edit-deliver-date]")?.value.trim() || original.deliver_date || "";
       return {
         ...original,
         store,
@@ -378,6 +381,7 @@ function collectEditedOrderItems(container, batch, batchIndex) {
         price,
         quantity,
         qty: quantity,
+        deliver_date: deliverDate,
       };
     })
     .filter((item) => item.product && item.quantity !== null);

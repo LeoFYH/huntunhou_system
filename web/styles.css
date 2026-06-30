@@ -430,13 +430,13 @@ label.t-reset,
 }
 
 .edit-sheet {
-  min-width: 820px;
+  min-width: 940px;
 }
 
 .edit-head,
 .edit-row {
   display: grid;
-  grid-template-columns: 42px 86px 110px minmax(150px, 1.3fr) minmax(130px, 1fr) 62px 82px 96px;
+  grid-template-columns: 42px 86px 110px minmax(150px, 1.3fr) minmax(130px, 1fr) 62px 82px 96px 112px;
   gap: 6px;
   align-items: center;
 }

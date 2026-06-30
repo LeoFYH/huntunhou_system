@@ -1157,7 +1157,7 @@ def _build_order_document_workbook(store: str, items: list[dict[str, Any]], orde
     left = Alignment(horizontal="left", vertical="center")
     header_fill = PatternFill("solid", fgColor="F3F3F3")
 
-    ws.merge_cells("A1:H1")
+    ws.merge_cells("A1:J1")
     ws["A1"] = f"馄饨侯（{_store_title_name(store)}）店产品订货单"
     ws["A1"].font = Font(name="SimSun", size=18, bold=True)
     ws["A1"].alignment = center
@@ -1181,7 +1181,7 @@ def _build_order_document_workbook(store: str, items: list[dict[str, Any]], orde
         ws[cell].font = Font(name="SimSun", size=12, bold=cell in {"A2", "A3", "H2", "H3"})
         ws[cell].alignment = left if cell in {"A2", "A3", "H2", "H3"} else center
 
-    headers = ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量"]
+    headers = ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量", "金额", "到货日期"]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(4, col)
         cell.value = header
@@ -1191,6 +1191,9 @@ def _build_order_document_workbook(store: str, items: list[dict[str, Any]], orde
         cell.alignment = center
 
     for row_index, item in enumerate(items, 5):
+        price = to_number(item.get("price"))
+        quantity = to_number(item.get("quantity"))
+        amount = price * quantity if price is not None and quantity is not None else None
         values = [
             row_index - 4,
             item.get("category", ""),
@@ -1198,17 +1201,19 @@ def _build_order_document_workbook(store: str, items: list[dict[str, Any]], orde
             item.get("product", ""),
             item.get("spec", ""),
             item.get("unit", ""),
-            display_number(item.get("price")),
-            display_number(item.get("quantity")),
+            display_number(price),
+            display_number(quantity),
+            display_number(amount),
+            item.get("deliver_date", ""),
         ]
         for col, value in enumerate(values, 1):
             cell = ws.cell(row_index, col)
             cell.value = value
             cell.font = Font(name="SimSun", size=11)
             cell.border = border
-            cell.alignment = center if col in {1, 6, 7, 8} else left
+            cell.alignment = center if col in {1, 6, 7, 8, 9, 10} else left
 
-    widths = {1: 8, 2: 12, 3: 14, 4: 24, 5: 20, 6: 10, 7: 12, 8: 12, 9: 16}
+    widths = {1: 8, 2: 12, 3: 14, 4: 24, 5: 20, 6: 10, 7: 12, 8: 12, 9: 12, 10: 16}
     for col, width in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
     ws.freeze_panes = "A5"

@@ -360,6 +360,7 @@ def test_generate_order_documents_uses_order_template_title_and_filters_rows() -
                     "unit": "箱",
                     "price": 399.11,
                     "quantity": 3,
+                    "deliver_date": "2026-06-28",
                 },
                 {
                     "store": "鼓楼",
@@ -381,7 +382,8 @@ def test_generate_order_documents_uses_order_template_title_and_filters_rows() -
         ws = wb.active
         assert ws["A1"].value == "馄饨侯（鼓楼）店产品订货单"
         assert ws["D2"].value == "6/27/2026"
-        assert [ws.cell(5, col).value for col in range(1, 9)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3]
+        assert [ws.cell(4, col).value for col in range(1, 11)] == ["序号", "类别", "编码", "原料名称", "规格", "单位", "单价", "订货数量", "金额", "到货日期"]
+        assert [ws.cell(5, col).value for col in range(1, 11)] == [1, "馄饨", "05020094", "鸡汤虾肉馄饨", "500g/袋*12袋", "箱", 399.11, 3, 1197.33, "2026-06-28"]
         assert ws.cell(6, 4).value is None
 
 
