@@ -39,6 +39,7 @@ from .services.robot_marking import mark_robot_orders_for_output
 from .storage import (
     clear_robot_mark_failures,
     ensure_storage,
+    material_mappings,
     output_path,
     public_state,
     record_robot_mark_failures,
@@ -46,6 +47,7 @@ from .storage import (
     robot_mark_failures,
     reset_module,
     reset_slot,
+    save_material_mappings,
     save_text,
     save_upload,
     seed_defaults_once,
@@ -83,6 +85,10 @@ class ClearReceiptsPayload(BaseModel):
     date: str
 
 
+class MaterialMappingPayload(BaseModel):
+    mappings: list[dict[str, Any]] = []
+
+
 class ReceiptPayload(BaseModel):
     items: list[dict[str, Any]] = []
     robot_receipt_ids: list[Any] = []
@@ -108,6 +114,17 @@ async def state() -> dict[str, Any]:
 @app.get("/api/recipe-preview")
 async def recipe_preview() -> dict[str, Any]:
     return summarize_recipe_tables(slot_paths("recipe_table"))
+
+
+@app.get("/api/material-mappings")
+async def get_material_mappings() -> dict[str, Any]:
+    return {"mappings": material_mappings()}
+
+
+@app.post("/api/material-mappings")
+async def update_material_mappings(payload: MaterialMappingPayload) -> dict[str, Any]:
+    mappings = save_material_mappings(payload.mappings)
+    return {"mappings": mappings, "state": public_state()}
 
 
 def _parse_order_date(value: str | None) -> date | None:
@@ -492,7 +509,7 @@ async def generate_material_upload(
         production_path = tmp_dir / (production_file.filename or "production.xlsx")
         production_path.write_bytes(await production_file.read())
         try:
-            output, missing, warnings = generate_material_issue_workbook(
+            output, missing, warnings, mapping_requests = generate_material_issue_workbook(
                 production_path=production_path,
                 recipe_paths=slot_paths("recipe_table"),
                 conversion_path=None,
@@ -501,11 +518,20 @@ async def generate_material_upload(
                 workshop_stock_text="",
                 document_date=_parse_order_date(document_date),
                 output_dir=tmp_dir,
+                material_mappings=material_mappings(),
+                require_confirmed_mappings=True,
             )
         except SpreadsheetReadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if missing:
             return {"status": "missing_config", "missing": missing, "warnings": warnings, "warning_groups": _material_warning_groups(warnings)}
+        if mapping_requests:
+            return {
+                "status": "needs_mapping",
+                "mapping_requests": mapping_requests,
+                "warnings": warnings,
+                "warning_groups": _material_warning_groups(warnings),
+            }
         assert output is not None
         registered = register_output(output, output.name)
     return {"status": "ok", "output": registered, "warnings": warnings, "warning_groups": _material_warning_groups(warnings)}

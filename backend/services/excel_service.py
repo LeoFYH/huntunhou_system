@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import zipfile
+from difflib import SequenceMatcher
 from collections import defaultdict
 from collections import Counter
 from copy import copy
@@ -1506,6 +1507,8 @@ def parse_stock_owner_details(path: Path | list[Path] | None) -> dict[str, dict[
             if not key:
                 continue
             detail = {
+                "product": row.get("product", ""),
+                "product_key": key,
                 "warehouse": _clean_owner_value(row.get("warehouse")),
                 "code": _clean_owner_value(row.get("code")),
                 "spec": _clean_owner_value(row.get("spec")),
@@ -1516,6 +1519,66 @@ def parse_stock_owner_details(path: Path | list[Path] | None) -> dict[str, dict[
             if not existing or _owner_detail_score(detail) >= _owner_detail_score(existing):
                 owners[key] = detail
     return owners
+
+
+def _owner_candidate_score(raw_name: str, raw_key: str, owner_key: str, detail: dict[str, Any]) -> float:
+    owner_name = str(detail.get("product") or "")
+    if raw_key == owner_key:
+        return 1.0
+    score = SequenceMatcher(None, raw_key, owner_key).ratio()
+    if raw_key and owner_key and (raw_key in owner_key or owner_key in raw_key):
+        score = max(score, 0.92)
+    raw_chars = set(raw_key)
+    owner_chars = set(owner_key)
+    if raw_chars and owner_chars:
+        score = max(score, len(raw_chars & owner_chars) / len(raw_chars | owner_chars))
+    if normalize_text(raw_name) and normalize_text(raw_name) in normalize_text(owner_name):
+        score = max(score, 0.9)
+    return round(score, 4)
+
+
+def material_owner_candidates(
+    raw_name: str,
+    stock_owner_details: dict[str, dict[str, Any]],
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    raw_key = normalize_key(raw_name)
+    scored = []
+    for owner_key, detail in stock_owner_details.items():
+        product = str(detail.get("product") or "").strip()
+        if not product:
+            continue
+        score = _owner_candidate_score(raw_name, raw_key, owner_key, detail)
+        if score < 0.18:
+            continue
+        scored.append(
+            {
+                "owner_key": owner_key,
+                "product": product,
+                "code": detail.get("code", ""),
+                "spec": detail.get("spec", ""),
+                "unit": detail.get("unit", ""),
+                "warehouse": detail.get("warehouse", ""),
+                "price": detail.get("price"),
+                "score": score,
+            }
+        )
+    scored.sort(key=lambda item: (item["score"], bool(item.get("spec")), bool(item.get("warehouse"))), reverse=True)
+    return scored[:limit]
+
+
+def _mapped_owner_detail(
+    raw_key: str,
+    stock_owner_details: dict[str, dict[str, Any]],
+    material_mappings: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    mapping = material_mappings.get(raw_key) or {}
+    owner_key = str(mapping.get("owner_key") or "").strip()
+    if owner_key and owner_key in stock_owner_details:
+        return owner_key, stock_owner_details[owner_key]
+    if raw_key in stock_owner_details:
+        return raw_key, stock_owner_details[raw_key]
+    return None, {}
 
 
 def parse_stock_owner_table(path: Path | list[Path] | None) -> dict[str, str]:
@@ -1564,7 +1627,9 @@ def generate_material_issue_workbook(
     workshop_stock_text: str,
     document_date: date | None,
     output_dir: Path,
-) -> tuple[Path | None, list[str], list[str]]:
+    material_mappings: dict[str, Any] | None = None,
+    require_confirmed_mappings: bool = False,
+) -> tuple[Path | None, list[str], list[str], list[dict[str, Any]]]:
     missing = []
     if not production_path:
         missing.append("已填好的排产表")
@@ -1573,12 +1638,14 @@ def generate_material_issue_workbook(
     if not stock_owner_path:
         missing.append("所属库表")
     if missing:
-        return None, missing, []
+        return None, missing, [], []
 
     warnings: list[str] = []
+    mapping_requests_by_key: dict[str, dict[str, Any]] = {}
     production_rows = parse_rows(production_path, "production")
     recipes = parse_recipe_tables(recipe_paths)
     stock_owner_details = parse_stock_owner_details(stock_owner_path)
+    material_mappings = material_mappings or {}
     workshop_stock = parse_workshop_stock(workshop_stock_text)
 
     recipe_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1614,17 +1681,29 @@ def generate_material_issue_workbook(
             need -= workshop_stock.get(raw_key, 0.0)
             if need <= 0:
                 continue
-            owner = stock_owner_details.get(raw_key, {})
+            owner_key, owner = _mapped_owner_detail(raw_key, stock_owner_details, material_mappings)
+            if require_confirmed_mappings and not owner:
+                mapping_requests_by_key.setdefault(
+                    raw_key,
+                    {
+                        "raw_key": raw_key,
+                        "raw_name": recipe["raw"],
+                        "reason": "投料表原料名没有匹配到所属库表，请确认对应的标准原料。",
+                        "candidates": material_owner_candidates(recipe["raw"], stock_owner_details),
+                    },
+                )
+                continue
             factor = _spec_conversion_factor(owner)
             issue_qty = math.ceil(need / factor) if factor else need
             if not factor:
                 warnings.append(f"{recipe['raw']} 在所属库表中没有可换算规格，按原始用量输出。")
             owner_price = owner.get("price")
+            material_key = owner_key or raw_key
             current_item = material_qty.setdefault(
-                raw_key,
+                material_key,
                 {
                     "code": first_present(owner.get("code"), recipe.get("code")),
-                    "raw": recipe["raw"],
+                    "raw": first_present(owner.get("product"), recipe["raw"]),
                     "spec": first_present(owner.get("spec"), recipe.get("spec")),
                     "unit": first_present(owner.get("unit"), recipe.get("unit")),
                     "warehouse": owner.get("warehouse", ""),
@@ -1640,6 +1719,9 @@ def generate_material_issue_workbook(
             if not current_item["warehouse"]:
                 warnings.append(f"{recipe['raw']} 没有在所属库表中找到所属库。")
             current_item["qty"] += issue_qty
+
+    if mapping_requests_by_key:
+        return None, [], warnings, list(mapping_requests_by_key.values())
 
     output_dir.mkdir(parents=True, exist_ok=True)
     today = (document_date or date.today()).isoformat()
@@ -1683,7 +1765,7 @@ def generate_material_issue_workbook(
 
     output = output_dir / f"材料出库单_{today}.xlsx"
     wb.save(output)
-    return output, missing, warnings
+    return output, missing, warnings, []
 
 
 def generate_receipt_workbook(

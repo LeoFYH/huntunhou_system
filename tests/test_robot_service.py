@@ -510,7 +510,7 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         ws.append(["冷冻", "0202", "猪肉馅", "10kg", "斤", 12.25])
         wb.save(owner_path)
 
-        output, missing, warnings = generate_material_issue_workbook(
+        output, missing, warnings, mapping_requests = generate_material_issue_workbook(
             production_path=production_path,
             recipe_paths=[recipe_path],
             conversion_path=None,
@@ -522,6 +522,7 @@ def test_generate_material_issue_workbook_adds_warehouse_from_owner_table() -> N
         )
 
         assert missing == []
+        assert mapping_requests == []
         assert warnings == []
         assert output is not None
         wb = load_workbook(output)
@@ -570,7 +571,7 @@ def test_generate_material_issue_workbook_fuzzy_matches_finished_recipe() -> Non
         ws.append(["冷冻", "0301", "虾仁", "10kg", "斤", 20])
         wb.save(owner_path)
 
-        output, missing, warnings = generate_material_issue_workbook(
+        output, missing, warnings, mapping_requests = generate_material_issue_workbook(
             production_path=production_path,
             recipe_paths=[recipe_path],
             conversion_path=None,
@@ -582,11 +583,83 @@ def test_generate_material_issue_workbook_fuzzy_matches_finished_recipe() -> Non
         )
 
         assert missing == []
+        assert mapping_requests == []
         assert any("模糊匹配" in warning and "虾肉馄饨" in warning for warning in warnings)
         assert output is not None
         wb = load_workbook(output)
         ws = wb.active
         assert ws["B3"].value == "虾仁"
+        assert ws["F3"].value == "冷冻"
+
+
+def test_generate_material_issue_workbook_requires_and_applies_raw_material_mapping() -> None:
+    with TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+
+        production_path = tmp_dir / "production.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["商品名称", "盘点库存数", "安全库存数", "入库数", "出库数量", "排产量"])
+        ws.append(["鸡腿", 0, 100, 0, 0, 100])
+        wb.save(production_path)
+
+        recipe_path = tmp_dir / "recipe.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "鸡腿投料单"
+        ws.append(["", "", "", "", "", "", ""])
+        ws.append(["", "原料名称", "单品净重 g", "得率", "", "", ""])
+        ws.append(["", "猪肉馅3:7", 100, 1, "", "", ""])
+        wb.save(recipe_path)
+
+        owner_path = tmp_dir / "owner.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["仓库", "存货编码", "存货名称", "规格型号", "计量单位", "本币无税单价"])
+        ws.append(["冷冻", "0202", "前尖肉馅3:7", "10kg", "斤", 12.25])
+        wb.save(owner_path)
+
+        output, missing, warnings, mapping_requests = generate_material_issue_workbook(
+            production_path=production_path,
+            recipe_paths=[recipe_path],
+            conversion_path=None,
+            stock_owner_path=owner_path,
+            material_template_path=None,
+            workshop_stock_text="",
+            document_date=date(2026, 6, 21),
+            output_dir=tmp_dir,
+            require_confirmed_mappings=True,
+        )
+
+        assert output is None
+        assert missing == []
+        assert warnings == []
+        assert mapping_requests[0]["raw_name"] == "猪肉馅3:7"
+        assert mapping_requests[0]["candidates"][0]["product"] == "前尖肉馅3:7"
+
+        output, missing, warnings, mapping_requests = generate_material_issue_workbook(
+            production_path=production_path,
+            recipe_paths=[recipe_path],
+            conversion_path=None,
+            stock_owner_path=owner_path,
+            material_template_path=None,
+            workshop_stock_text="",
+            document_date=date(2026, 6, 21),
+            output_dir=tmp_dir,
+            material_mappings={"猪肉馅37": {"owner_key": "前尖肉馅37"}},
+            require_confirmed_mappings=True,
+        )
+
+        assert missing == []
+        assert mapping_requests == []
+        assert output is not None
+        wb = load_workbook(output)
+        ws = wb.active
+        assert ws["A3"].value == "0202"
+        assert ws["B3"].value == "前尖肉馅3:7"
+        assert ws["C3"].value == "10kg"
+        assert ws["D3"].value == "斤"
+        assert ws["E3"].value == 20
         assert ws["F3"].value == "冷冻"
 
 

@@ -575,6 +575,61 @@ function renderWarningBlocks(data) {
   return (data.warnings || []).map((warning) => `<div class="notice">${escapeHtml(warning)}</div>`).join("");
 }
 
+function renderMaterialMappingRequests(target, data) {
+  const requests = data.mapping_requests || [];
+  let html = renderWarningBlocks(data);
+  if (!requests.length) {
+    target.innerHTML = `${html}<div class="notice">没有需要确认的原料映射。</div>`;
+    return;
+  }
+  html += `
+    <div class="mapping-panel">
+      <div class="mapping-title">需要确认 ${requests.length} 个原料映射</div>
+      <div class="mapping-hint">投料表原料名没有直接匹配到所属库表。请为每个原料选择所属库表里的标准原料，保存后再点一次“生成领料单”。映射会长期保存。</div>
+      <div class="mapping-list">
+        ${requests
+          .map((request) => {
+            const candidates = request.candidates || [];
+            const options = candidates
+              .map((candidate) => {
+                const meta = [
+                  candidate.code && `编码 ${candidate.code}`,
+                  candidate.spec && `规格 ${candidate.spec}`,
+                  candidate.unit && `单位 ${candidate.unit}`,
+                  candidate.warehouse && `库 ${candidate.warehouse}`,
+                  candidate.price !== null && candidate.price !== undefined && `单价 ${candidate.price}`,
+                  candidate.score && `匹配 ${Math.round(candidate.score * 100)}%`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return `<option value="${escapeHtml(candidate.owner_key)}" data-owner-name="${escapeHtml(candidate.product || "")}">${escapeHtml(candidate.product || candidate.owner_key)}${meta ? `（${escapeHtml(meta)}）` : ""}</option>`;
+              })
+              .join("");
+            return `
+              <div class="mapping-card">
+                <div>
+                  <div class="mapping-raw">${escapeHtml(request.raw_name || request.raw_key)}</div>
+                  <div class="mapping-reason">${escapeHtml(request.reason || "请选择对应的标准原料。")}</div>
+                </div>
+                ${
+                  candidates.length
+                    ? `<select class="mapping-select" data-material-map-select data-raw-key="${escapeHtml(request.raw_key)}" data-raw-name="${escapeHtml(request.raw_name || "")}">${options}</select>`
+                    : `<div class="mapping-empty">所属库表里没有可用候选，请先补充或换新所属库表。</div>`
+                }
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+      <div class="mapping-actions">
+        <button class="mini ok" data-save-material-mappings ${requests.some((request) => !(request.candidates || []).length) ? "disabled" : ""}>保存映射</button>
+        <span>保存只更新工具映射表，不修改投料表和所属库原文件。</span>
+      </div>
+    </div>
+  `;
+  target.innerHTML = html;
+}
+
 function renderDownload(target, data, options = {}) {
   const missing = data.missing || [];
   const mode = options.mode || "production";
@@ -673,6 +728,7 @@ document.addEventListener("click", async (event) => {
   const acceptBatch = event.target.closest("[data-accept-order-batch]");
   const clearOrderSync = event.target.closest("[data-clear-order-sync]");
   const hardClear = event.target.closest("[data-hard-clear]");
+  const saveMaterialMappings = event.target.closest("[data-save-material-mappings]");
   const retryRobotMark = event.target.closest("[data-retry-robot-mark]");
   const returnRobotOrders = event.target.closest("[data-return-robot-orders]");
   const returnRobotReceipts = event.target.closest("[data-return-robot-receipts]");
@@ -712,6 +768,33 @@ document.addEventListener("click", async (event) => {
     const batchIndex = Number(acceptBatch.dataset.batchIndex);
     const batch = batches[batchIndex];
     selectOrderBatch(container, batch, acceptBatch.dataset.acceptOrderBatch, acceptBatch, batchIndex);
+  } else if (saveMaterialMappings) {
+    const panel = saveMaterialMappings.closest(".mapping-panel");
+    const mappings = $$("[data-material-map-select]", panel)
+      .map((select) => {
+        const selected = select.selectedOptions[0];
+        return {
+          raw_key: select.dataset.rawKey || "",
+          raw_name: select.dataset.rawName || "",
+          owner_key: select.value,
+          owner_name: selected?.dataset.ownerName || selected?.textContent || "",
+        };
+      })
+      .filter((mapping) => mapping.raw_key && mapping.owner_key);
+    if (!mappings.length) return;
+    await runOnce(saveMaterialMappings, "正在保存...", async () => {
+      try {
+        const data = await request("/api/material-mappings", {
+          method: "POST",
+          body: JSON.stringify({ mappings }),
+        });
+        appState = data.state || appState;
+        renderState();
+        $("#materialResult").innerHTML = `<div class="download"><span>已保存 ${mappings.length} 个原料映射。请重新点击“生成领料单”。</span></div>`;
+      } catch (error) {
+        panel.insertAdjacentHTML("beforeend", `<div class="notice">${escapeHtml(error.message)}</div>`);
+      }
+    });
   } else if (event.target.closest("#acceptReceiptSync")) {
     const container = $("#receiptSyncResult");
     const payload = JSON.parse(container.dataset.payload || "{}");
@@ -910,7 +993,11 @@ $("#generateMaterial").addEventListener("click", async (event) => {
     form.append("document_date", selectedDate("#dateModule2"));
     try {
       const data = await request("/api/generate/material-issue-upload", { method: "POST", body: form });
-      renderDownload($("#materialResult"), data);
+      if (data.status === "needs_mapping") {
+        renderMaterialMappingRequests($("#materialResult"), data);
+      } else {
+        renderDownload($("#materialResult"), data);
+      }
     } catch (error) {
       $("#materialResult").innerHTML = `<div class="notice">${escapeHtml(error.message)}</div>`;
     }

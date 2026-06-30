@@ -137,6 +137,8 @@ def test_parse_stock_owner_table_reads_legacy_xls(monkeypatch: pytest.MonkeyPatc
     assert owners[normalize_key("面粉")] == "主食"
     assert owners[normalize_key("猪肉馅")] == "冷藏"
     assert details[normalize_key("面粉")] == {
+        "product": "面粉",
+        "product_key": normalize_key("面粉"),
         "warehouse": "主食",
         "code": "0101",
         "spec": "25kg",
@@ -168,6 +170,8 @@ def test_parse_stock_owner_details_reads_multiple_files_and_prefers_completeness
     details = parse_stock_owner_details([old_path, new_path])
 
     assert details[normalize_key("面粉")] == {
+        "product": "面粉",
+        "product_key": normalize_key("面粉"),
         "warehouse": "调料辅料库",
         "code": "0101",
         "spec": "25kg/袋",

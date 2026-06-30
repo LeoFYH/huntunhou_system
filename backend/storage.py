@@ -161,6 +161,33 @@ def clear_robot_mark_failures(success_ids: list[Any]) -> None:
     save_state(state)
 
 
+def material_mappings() -> dict[str, dict[str, Any]]:
+    mappings = load_state().get("settings", {}).get("material_mappings", {})
+    return mappings if isinstance(mappings, dict) else {}
+
+
+def save_material_mappings(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    state = load_state()
+    mappings = state.setdefault("settings", {}).setdefault("material_mappings", {})
+    if not isinstance(mappings, dict):
+        mappings = {}
+        state["settings"]["material_mappings"] = mappings
+    for item in items:
+        raw_key = str(item.get("raw_key") or "").strip()
+        owner_key = str(item.get("owner_key") or "").strip()
+        if not raw_key or not owner_key:
+            continue
+        mappings[raw_key] = {
+            "raw_key": raw_key,
+            "raw_name": str(item.get("raw_name") or "").strip(),
+            "owner_key": owner_key,
+            "owner_name": str(item.get("owner_name") or "").strip(),
+            "updated_at": now_iso(),
+        }
+    save_state(state)
+    return mappings
+
+
 async def save_upload(slot: str, upload: UploadFile) -> dict[str, Any]:
     state = load_state()
     file_id = uuid.uuid4().hex
